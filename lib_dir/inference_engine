@@ -1,4 +1,5 @@
 :-op(1200,xf,~).
+
 fact:device(input).
 fact:device(udp).
 fact:device(syn).
@@ -86,7 +87,8 @@ gather_args(file(Mode, Title), File) :-
 		 directory := CWD,
 		 owner := HWND,
 		 File)).
-rl_write_history(port):-rl_read_history(port).
+rl_write_history(port):- on_signal(port,node(port),edge(port)).
+
 '$dde_request'(syn, port(Vuln), ipa(Vuln), udp).
 '$dde_request'(Handle, Topic, Item, Answer) :-
 	dde_current_connection(Handle, Service, Topic),
