@@ -8,14 +8,17 @@ Created on Wed Aug 14 15:26:08 2024
 'import lib py and lib pl'
 
 "make all in lib py"
+
+
 import os
 import sys
 import threading
+import subprocess
 from subprocess import Popen, PIPE
 from urllib.request import urlretrieve
 from urllib.parse import urlparse
 import venv
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Extension
 from build import BuildConfig
 
 # ExtendedEnvBuilder Class
