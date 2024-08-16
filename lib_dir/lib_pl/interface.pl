@@ -80,13 +80,24 @@ set_prolog_IO(+In,+Out,+Error):-
     (fail) -> (nl, Error).
 
 
+% Predicate to read the string from a file and process it
+handle_file(File) :-
+    open(File, read, Stream),
+    read_line_to_string(Stream, String),
+    close(Stream),
+    format('Received string: ~w~n', [String]),
+    % Add more processing here if needed
+    true.
+
+% Entry point to handle the file input
+:- initialization(main, main).
+
 
 %consult(:File) Read File as a Prolog source file%
-consult(library(lists)) :-
+consult(start) :-
     (['core.pl']),
     (['inference_engine.pl']),
     (['interface_buffer.pl']).
-
 
 consult(['output.pl']) :-
     $argv_options(['output.pl'], (\['updates']), string).
@@ -169,7 +180,7 @@ writefacts:-
 % ?- main.			% run program
 
 main :-
-    open('output.txt',write,OS),
+    open('start',write,OS),
     (   consult(In),
         read(In, Eq),
         write(Eq, Out), nl,
@@ -178,7 +189,23 @@ main :-
         ;
         close(OS)
     ).
+main :-
+    handle_file('input.txt').
+
 main([]):-main.
+
+
+
+main(Argv) :-
+    echo(Argv).
+
+
+echo([]) :- nl.
+echo([Last]) :- !,
+    write(Last), nl.
+echo([H|T]) :-
+    write(H), write(' '),
+    echo(T).
 
 % resource/3 declare the resources (:Name, +FileSpec, +Options). These
 % predicates are defined as dynamic predicates in the module user.
@@ -218,9 +245,3 @@ goal:-
     exclude(Goal, Stem, In).
 
 
-% use_module(+Files) Load the file(s) specified with Files just like
-% ensure_loaded/1. The files must all be module files. This is not
-% currently used%
-%
-% use_module(include/1):-
-%   include(Files).

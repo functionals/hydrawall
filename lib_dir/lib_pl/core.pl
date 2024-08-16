@@ -7,18 +7,6 @@
 
 
 
-start:-
-	!,input(A),
-	nl,
-	write('Enter definition as predication:'),
-	nl,
-	read(A),
-	assert(A),
-	define(A),
-	nl,
-	display(A),
-	nl,
-	write('learned').
 
 
 
@@ -61,7 +49,7 @@ stream_input:-read(_),(assert(_)->[_]).
 stream_input:-smart:input(_)->smart:output(_).
 stream_input:-semantic_input.
 stream_input:-lattice:node(X,Y;Z),parse:parse(X),output:parse(X,Y,Z).
-stream_input:-start.
+
 
 semantic_input:-(((X),(Y),(Z)),semantic_input(X,Y,Z|(_))).
 semantic_input:-goal((_),(_),(_)).
@@ -74,7 +62,7 @@ semantic_input(sentence|(Sentence;Sentence_group))
 semantic_input(Y|X;Z)-->((Y|X;Z),[sentence,sentence_group]).
 
 
-unknown(_):-start.
+
 unknown(input(Vision,Sound,Text)):-input(unknown(Vision,Sound,Text)).
 unknown(X,Y,Z):-define(X,Y,Z);meaning(X,Y,Z).
 unknown(X,Y,Z):-stream_input:(X,Y,Z).
@@ -303,11 +291,6 @@ s(N,M,C):-N,M,C.
 ~(pass):-not(pass).
 
 
-random(Prime):-(~(number(Prime))).
-random(Prime):-lattice:node(Prime).
-random(_):-lattice:matrix(set(_)).
-random(X):-(~(pass(_)),~(pass))->lattice:matrix(X).
-random(X):- X is random(1000000).
 
 
 
@@ -452,7 +435,6 @@ lattice:edge(A,B,C):-A,B,C.
 
 
 
-add_edges(X,Y,Z):-lattice:edge(X,Y,Z).
 
 node(X,Y,Z):-lattice:node(X,Y,Z|Prime1,Prime2,Prime3),(Prime1,Prime2,Prime3).
 node(X,Y,Z):-add_edges(X,Y,Z).
@@ -500,7 +482,7 @@ lattice:min(Bound,BF,Bound1):-lattice:min(Bound,BF,Bound1).
 
 :- module(emacs_dde_server).
 :- module(emacs_dde_server),module(win_register_emacs).
-:- use_module(library(pce)).
+
 
 
 handle_request(pass):-'$dde_connect'(lattice:matrix),(lattice:node(_,_,_),(lattice:edge(3))).
@@ -582,3 +564,5 @@ lattice:edge([A,B];[B,C];[C,B])-:-Line,Node:-lattice:node(3),lattice:edge([A,B,C
 P-:-Q:-meaning(P,(Q)),(read(P),nl,write((Q)));(read(Q),nl,write((P))).
 P-:-Q:-copy_list(Q-:-P).
 Prime-:-not(divisible(not(X),X),X+1):-Prime.
+
+

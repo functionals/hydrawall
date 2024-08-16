@@ -2,7 +2,7 @@
 """
 Created on Thu Aug 15 22:31:34 2024
 
-@author: M
+@author: Ian Malloy
 """
 import logging
 import os
