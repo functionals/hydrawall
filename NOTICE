@@ -3,8 +3,14 @@ Hydrawall was first conceived by Ian Malloy in 2012.
 The Hydrawall project is maintained by Ian Malloy at:
 https://github.com/functionals/hydrawall
 
-interface_buffer.pl was developed by Ian Malloy in 2010 as a senior project in cognitive science.
+interface_buffer.pl was developed by Ian Malloy in 2010 as a senior project in cognitive science at Augustana University.
 
 core.pl was developed by Ian Malloy in 2011 per funding from the NASA Space Grant Consortium.
 
-inference_engine.pl was developed by Ian Malloy in 2015 for an MSc in cyber warfare.
+inference_engine.pl was developed by Ian Malloy in 2015 for an MSc in cyber warfare at Utica University.
+
+Janus was developed, and is maintained, by Jan Wielemaker
+
+Dshell was developed by, and is maintained by, the United States Army.
+
+TensorFlow was developed, and is maintained, by Google.

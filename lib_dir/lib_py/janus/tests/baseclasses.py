@@ -1,0 +1,3 @@
+class myint(int):
+    pass
+
