@@ -13,6 +13,7 @@ Created on Wed Aug 14 15:26:08 2024
 
 "make all in lib py"
 
+<<<<<<< HEAD
 
 <<<<<<< HEAD
 import os
@@ -310,3 +311,5 @@ class CustomConfig(BuildConfig()):
     preserve_paths = True
     builtins = True
 >>>>>>> 08cb51a09caa321718d2eb52eb21d1d54d73e72a
+=======
+>>>>>>> e1fe7d769c99a96c937002ef4c26325dc9e8998a
