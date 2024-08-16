@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+<<<<<<< HEAD
 
 """
 Created on Wed Aug 14 15:23:13 2024
@@ -147,3 +148,11 @@ def run_main():
 
 if __name__ == '__main__':
     run_main()
+=======
+"""
+Created on Wed Aug 14 15:23:13 2024
+
+@author: M
+"""
+
+>>>>>>> ae65bf7851a214435bdc7deef25deb75dd28fb00
