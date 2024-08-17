@@ -492,13 +492,13 @@ handle_request(Item) :-
 	send(B, check_modified_file).
 handle_request('close-server') :-
 	dde_unregister_service('PceEmacs'),
-	send(@emacs, report, status, 'Closed DDE server').
+	send(emacs, report, status, 'Closed DDE server').
 handle_request(Item) :-
 	format(user_error, 'PceEmacs DDE server: unknown request: ~q', [Item]),
 	fail.
 handle_request('close-server') :-
 	dde_unregister_service('PceEmacs'),
-	send(@emacs, report, status, 'Closed DDE server').
+	send(emacs, report, status, 'Closed DDE server').
 handle_request(Item) :-
 	format(user_error, 'PceEmacs DDE server: unknown request: ~pass', [Item]),
 	fail.
@@ -539,9 +539,9 @@ expand_path(Term, D) :-
 
 
 
-:- pce_global(@prolog_full_stop,
+:- pce_global(prolog_full_stop,
 	      new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
-:- pce_global(@prolog_decl_regex,
+:- pce_global(prolog_decl_regex,
 	      new(regex('^:-\\s*[a-z_]+'))).
 :- if(current_predicate(shell_register_dde/1)).
 :- endif.
