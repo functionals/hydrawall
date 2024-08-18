@@ -1,58 +1,6 @@
-#Hydrawall
 
-This project is a cyber security suite implementing network forensics, machine learning, and natural language processing.
-
-The artificial intelligence uses an expert system and natural language processing.
-
-Components of this project include:
-
-Dshell, developed by the United States Army Research Lab and dependencies,
- tensorflow machine learning developed by Google, 
- and SWI-Prolog scripts developed by Ian Malloy under funding from the NASA Space Grant Consortium.
-
-
-
-
-
-# build
-
-[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/pypa/build/main.svg)](https://results.pre-commit.ci/latest/github/pypa/build/main)
-[![CI test](https://github.com/pypa/build/actions/workflows/test.yml/badge.svg)](https://github.com/pypa/build/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/pypa/build/branch/main/graph/badge.svg)](https://codecov.io/gh/pypa/build)
-
-[![Documentation Status](https://readthedocs.org/projects/pypa-build/badge/?version=latest)](https://build.pypa.io/en/latest/?badge=latest)
-[![PyPI version](https://badge.fury.io/py/build.svg)](https://pypi.org/project/build/)
-[![Discord](https://img.shields.io/discord/803025117553754132?label=Discord%20chat%20%23build)](https://discord.gg/pypa)
-
-A simple, correct Python build frontend.
-
-See the [documentation](https://build.pypa.io) for more information.
-
-### Installation
-
-`build` can be installed via `pip` or an equivalent via:
-
-```console
-$ pip install build
-```
-
-### Usage
-
-```console
-$ python -m build
-```
-
-This will build the package in an isolated environment, generating a
-source-distribution and wheel in the directory `dist/`.
-See the [documentation](https://build.pypa.io) for full information.
-
-### Code of Conduct
-
-Everyone interacting in the build's codebase, issue trackers, chat rooms, and mailing lists is expected to follow
-the [PSF Code of Conduct].
-
-[psf code of conduct]: https://github.com/pypa/.github/blob/main/CODE_OF_CONDUCT.md
-
+########################################
+Supplements
 
 # Dshell
 An extensible network forensic analysis framework. Enables rapid development of plugins to support the dissection of network packet captures.
@@ -251,6 +199,322 @@ decode.main(
 )
 ```
 
+<div align="center">
+  <img src="https://storage.googleapis.com/tf_model_garden/tf_model_garden_logo.png">
+</div>
+
+[![Python](https://img.shields.io/pypi/pyversions/tensorflow.svg?style=plastic)](https://badge.fury.io/py/tensorflow)
+[![tf-models-official PyPI](https://badge.fury.io/py/tf-models-official.svg)](https://badge.fury.io/py/tf-models-official)
+
+
+# Welcome to the Model Garden for TensorFlow
+
+The TensorFlow Model Garden is a repository with a number of different
+implementations of state-of-the-art (SOTA) models and modeling solutions for
+TensorFlow users. We aim to demonstrate the best practices for modeling so that
+TensorFlow users can take full advantage of TensorFlow for their research and
+product development.
+
+To improve the transparency and reproducibility of our models, training logs on
+[TensorBoard.dev](https://tensorboard.dev) are also provided for models to the
+extent possible though not all models are suitable.
+
+| Directory | Description |
+|-----------|-------------|
+| [official](official) | • A collection of example implementations for SOTA models using the latest TensorFlow 2's high-level APIs<br />• Officially maintained, supported, and kept up to date with the latest TensorFlow 2 APIs by TensorFlow<br />• Reasonably optimized for fast performance while still being easy to read<br /> For more details on the capabilities, check the guide on the [Model-garden](https://www.tensorflow.org/tfmodels)|
+| [research](research) | • A collection of research model implementations in TensorFlow 1 or 2 by researchers<br />• Maintained and supported by researchers |
+| [community](community) | • A curated list of the GitHub repositories with machine learning models and implementations powered by TensorFlow 2 |
+| [orbit](orbit) | • A flexible and lightweight library that users can easily use or fork when writing customized training loop code in TensorFlow 2.x. It seamlessly integrates with `tf.distribute` and supports running on different device types (CPU, GPU, and TPU). |
+
+## Installation
+
+To install the current release of tensorflow-models, please follow any one of the methods described below.
+
+#### Method 1: Install the TensorFlow Model Garden pip package
+
+<details>
+
+**tf-models-official** is the stable Model Garden package. Please check out the [releases](https://github.com/tensorflow/models/releases) to see what are available modules.
+
+pip3 will install all models and dependencies automatically.
+
+```shell
+pip3 install tf-models-official
+```
+
+Please check out our examples:
+  - [basic library import](https://github.com/tensorflow/models/blob/master/tensorflow_models/tensorflow_models_pypi.ipynb)
+  - [nlp model building](https://github.com/tensorflow/models/blob/master/docs/nlp/index.ipynb)
+to learn how to use a PIP package.
+
+Note that **tf-models-official** may not include the latest changes in the master branch of this
+github repo. To include latest changes, you may install **tf-models-nightly**,
+which is the nightly Model Garden package created daily automatically.
+
+```shell
+pip3 install tf-models-nightly
+```
+
+</details>
+
+
+#### Method 2: Clone the source
+
+<details>
+
+1. Clone the GitHub repository:
+
+```shell
+git clone https://github.com/tensorflow/models.git
+```
+
+2. Add the top-level ***/models*** folder to the Python path.
+
+```shell
+export PYTHONPATH=$PYTHONPATH:/path/to/models
+```
+
+If you are using in a Windows environment, you may need to use the following command with PowerShell:
+```shell
+$env:PYTHONPATH += ":\path\to\models"
+```
+
+If you are using a Colab notebook, please set the Python path with os.environ.
+
+```python
+import os
+os.environ['PYTHONPATH'] += ":/path/to/models"
+```
+
+3. Install other dependencies
+
+```shell
+pip3 install --user -r models/official/requirements.txt
+```
+
+Finally, if you are using nlp packages, please also install
+**tensorflow-text-nightly**:
+
+```shell
+pip3 install tensorflow-text-nightly
+```
+
+</details>
+
+
+## Announcements
+
+Please check [this page](https://github.com/tensorflow/models/wiki/Announcements) for recent announcements.
+
+## Contributions
+
+[![help wanted:paper implementation](https://img.shields.io/github/issues/tensorflow/models/help%20wanted%3Apaper%20implementation)](https://github.com/tensorflow/models/labels/help%20wanted%3Apaper%20implementation)
+
+If you want to contribute, please review the [contribution guidelines](https://github.com/tensorflow/models/wiki/How-to-contribute).
+
+## License
+
+[Apache License 2.0](LICENSE)
+
+## Citing TensorFlow Model Garden
+
+If you use TensorFlow Model Garden in your research, please cite this repository.
+
+```
+@misc{tensorflowmodelgarden2020,
+  author = {Hongkun Yu, Chen Chen, Xianzhi Du, Yeqing Li, Abdullah Rashwan, Le Hou, Pengchong Jin, Fan Yang,
+            Frederick Liu, Jaeyoun Kim, and Jing Li},
+  title = {{TensorFlow Model Garden}},
+  howpublished = {\url{https://github.com/tensorflow/models}},
+  year = {2020}
+}
+```
+# Public docs for TensorFlow Models
+
+This directory contains the top-level public documentation for
+[TensorFlow Models](https://github.com/tensorflow/models).
+
+This directory is mirrored to https://tensorflow.org/tfmodels, and is mainly
+concerned with documenting the tools provided in the `tensorflow_models` pip
+package (including `orbit`).
+
+Api-reference pages are
+[available on the site](https://www.tensorflow.org/api_docs/more).
+
+The
+[Official Models](https://github.com/tensorflow/models/blob/master/official/projects)
+and [Research Models](https://github.com/tensorflow/models/blob/master/research)
+directories are not described in detail here, refer to the individual project
+directories for more information.
+
+=======
+ janus
+=======
+.. image:: https://github.com/aio-libs/janus/actions/workflows/ci.yml/badge.svg
+    :target: https://github.com/aio-libs/janus/actions/workflows/ci.yml
+.. image:: https://codecov.io/gh/aio-libs/janus/branch/master/graph/badge.svg
+    :target: https://codecov.io/gh/aio-libs/janus
+.. image:: https://img.shields.io/pypi/v/janus.svg
+    :target: https://pypi.python.org/pypi/janus
+.. image:: https://badges.gitter.im/Join%20Chat.svg
+    :target: https://gitter.im/aio-libs/Lobby
+    :alt: Chat on Gitter
+
+
+
+Mixed sync-async queue, supposed to be used for communicating between
+classic synchronous (threaded) code and asynchronous (in terms of
+asyncio_) one.
+
+Like `Janus god <https://en.wikipedia.org/wiki/Janus>`_ the queue
+object from the library has two faces: synchronous and asynchronous
+interface.
+
+Synchronous is fully compatible with `standard queue
+<https://docs.python.org/3/library/queue.html>`_, asynchronous one
+follows `asyncio queue design
+<https://docs.python.org/3/library/asyncio-queue.html>`_.
+
+Usage example (Python 3.7+)
+===========================
+
+.. code:: python
+
+    import asyncio
+    import janus
+
+
+    def threaded(sync_q: janus.SyncQueue[int]) -> None:
+        for i in range(100):
+            sync_q.put(i)
+        sync_q.join()
+
+
+    async def async_coro(async_q: janus.AsyncQueue[int]) -> None:
+        for i in range(100):
+            val = await async_q.get()
+            assert val == i
+            async_q.task_done()
+
+
+    async def main() -> None:
+        queue: janus.Queue[int] = janus.Queue()
+        loop = asyncio.get_running_loop()
+        fut = loop.run_in_executor(None, threaded, queue.sync_q)
+        await async_coro(queue.async_q)
+        await fut
+        queue.close()
+        await queue.wait_closed()
+
+
+    asyncio.run(main())
+
+
+Usage example (Python 3.5 and 3.6)
+==================================
+**N.B. For python 3.6 and below you must use janus < 1.0.0**
+
+.. code:: python
+
+    import asyncio
+    import janus
+
+    loop = asyncio.get_event_loop()
+
+
+    def threaded(sync_q):
+        for i in range(100):
+            sync_q.put(i)
+        sync_q.join()
+
+
+    async def async_coro(async_q):
+        for i in range(100):
+            val = await async_q.get()
+            assert val == i
+            async_q.task_done()
+
+
+    async def main():
+        queue = janus.Queue()
+        fut = loop.run_in_executor(None, threaded, queue.sync_q)
+        await async_coro(queue.async_q)
+        await fut
+        queue.close()
+        await queue.wait_closed()
+
+    try:
+        loop.run_until_complete(main())
+    finally:
+        loop.close()
+
+
+Communication channels
+======================
+
+GitHub Discussions: https://github.com/aio-libs/janus/discussions
+
+Feel free to post your questions and ideas here.
+
+*gitter chat* https://gitter.im/aio-libs/Lobby
+
+
+License
+=======
+
+``janus`` library is offered under Apache 2 license.
+
+Thanks
+======
+
+The library development is sponsored by DataRobot (https://datarobot.com)
+
+.. _asyncio: https://docs.python.org/3/library/asyncio.html
+
+
+
+========================================================
+pyOpenSSL -- A Python wrapper around the OpenSSL library
+========================================================
+
+.. image:: https://readthedocs.org/projects/pyopenssl/badge/?version=stable
+   :target: https://pyopenssl.org/en/stable/
+   :alt: Stable Docs
+
+.. image:: https://github.com/pyca/pyopenssl/workflows/CI/badge.svg?branch=main
+   :target: https://github.com/pyca/pyopenssl/actions?query=workflow%3ACI+branch%3Amain
+
+**Note:** The Python Cryptographic Authority **strongly suggests** the use of `pyca/cryptography`_
+where possible. If you are using pyOpenSSL for anything other than making a TLS connection
+**you should move to cryptography and drop your pyOpenSSL dependency**.
+
+High-level wrapper around a subset of the OpenSSL library. Includes
+
+* ``SSL.Connection`` objects, wrapping the methods of Python's portable sockets
+* Callbacks written in Python
+* Extensive error-handling mechanism, mirroring OpenSSL's error codes
+
+... and much more.
+
+You can find more information in the documentation_.
+Development takes place on GitHub_.
+
+
+Discussion
+==========
+
+If you run into bugs, you can file them in our `issue tracker`_.
+
+We maintain a cryptography-dev_ mailing list for both user and development discussions.
+
+You can also join ``#pyca`` on ``irc.libera.chat`` to ask questions or get involved.
+
+
+.. _documentation: https://pyopenssl.org/
+.. _`issue tracker`: https://github.com/pyca/pyopenssl/issues
+.. _cryptography-dev: https://mail.python.org/mailman/listinfo/cryptography-dev
+.. _GitHub: https://github.com/pyca/pyopenssl
+.. _`pyca/cryptography`: https://github.com/pyca/cryptography
 
 =========================
 MaxMind GeoIP2 Python API
@@ -771,295 +1035,6 @@ client API, please contact `MaxMind support
 
 
 
-# JA3 - A method for profiling SSL/TLS Clients
-
-JA3 was invented at Salesforce in 2017. However, the project is no longer being actively maintained by Salesforce. Its original creator, John Althouse, maintains the latest in TLS client fingerprinting technology at [FoxIO-LLC](https://github.com/FoxIO-LLC/ja4).
-
-JA3 is a method for creating SSL/TLS client fingerprints that should be easy to produce on any platform and can be easily shared for threat intelligence.
-
-Before using, please read this blog post: [TLS Fingerprinting with JA3 and JA3S](https://engineering.salesforce.com/tls-fingerprinting-with-ja3-and-ja3s-247362855967)
-
-This repo includes JA3 and JA3S scripts for [Zeek](https://www.zeekurity.org/) and [Python](https://www.python.org/). You can find a nice Rust implementation of the JA3 algorithm [here](https://github.com/jabedude/ja3-rs)
-
-JA3 support has also been added to:  
-[Moloch](http://molo.ch/)  
-[Trisul NSM](https://github.com/trisulnsm/trisul-scripts/tree/master/lua/frontend_scripts/reassembly/ja3)  
-[NGiNX](https://github.com/fooinha/nginx-ssl-ja3)
-[BFE](https://github.com/bfenetworks/bfe)
-[MISP](https://github.com/MISP)  
-[Darktrace](https://www.darktrace.com/)  
-[Suricata](https://suricata-ids.org/tag/ja3/)  
-[Elastic.co Packetbeat](https://www.elastic.co/guide/en/beats/packetbeat/master/exported-fields-tls.html)  
-[Splunk](https://www.splunk.com/blog/2017/12/18/configuring-ja3-with-bro-for-splunk.html)  
-[MantisNet](https://www.mantisnet.com/)  
-[ICEBRG](http://icebrg.io/)  
-[Redsocks](https://www.redsocks.eu/)  
-[NetWitness](https://github.com/timetology/nw/tree/master/parsers/ssl_ja3)  
-[ExtraHop](https://www.extrahop.com/)  
-[Vectra Cognito Platform](https://vectra.ai/)  
-[Corvil](https://www.corvil.com/blog/2018/environmentally-conscious-understanding-your-network)  
-[Java](https://github.com/lafaspot/ja3_4java)  
-[Go](https://github.com/open-ch/ja3)  
-[Security Onion](https://securityonion.net/)   
-[AIEngine](https://bitbucket.org/camp0/aiengine)  
-[RockNSM](https://rocknsm.io/)  
-[Corelight](https://www.corelight.com/products/software)  
-[VirusTotal](https://blog.virustotal.com/2019/10/in-house-dynamic-analysis-virustotal-jujubox.html#ja3)  
-[SELKS](https://www.stamus-networks.com/selks-6)  
-[Stamus Networks](https://www.stamus-networks.com/)  
-[IBM QRadar Network Insights (QNI)](https://community.ibm.com/community/user/security/blogs/tom-obremski1/2020/10/23/qni-ja3-ja3s-for-network-encryption)  
-[InQuest](https://inquest.net)  
-[Cloudflare](https://developers.cloudflare.com/bots/concepts/ja3-fingerprint/)  
-[AWS Network Firewall](https://docs.aws.amazon.com/network-firewall/latest/developerguide/aws-managed-rule-groups-threat-signature.html)  
-[Azure Firewall](https://learn.microsoft.com/en-us/azure/firewall/idps-signature-categories)  
-[AWS WAF](https://aws.amazon.com/about-aws/whats-new/2023/09/aws-waf-ja3-fingerprint-match/)  
-[Google Cloud](https://cloud.google.com/load-balancing/docs/https/custom-headers-global)  
-and more...  
-
-
-## Examples
-
-JA3 fingerprint for the standard Tor client:  
-```
-e7d705a3286e19ea42f587b344ee6865
-```
-JA3 fingerprint for the Trickbot malware:
-```
-6734f37431670b3ab4292b8f60f29984
-```
-JA3 fingerprint for the Emotet malware:
-```
-4d7a28d6f2263ed61de88ca66eb011e3
-```
-
-While destination IPs, Ports, and X509 certificates change, the JA3 fingerprint remains constant for the client application in these examples across our sample set. Please be aware that these are just examples, not indicative of all versions ever.
-
-## Lists
-
-Example lists of known JA3's and their associated applications can be found [here](https://github.com/salesforce/ja3/tree/master/lists).  
-
-A more up-to-date crowd sourced method of gathering and reporting on JA3s can be found at [ja3er.com](https://ja3er.com).  
-
-## How it works
-
-TLS and it’s predecessor, SSL, I will refer to both as “SSL” for simplicity, are used to encrypt communication for both common applications, to keep your data secure, and malware, so it can hide in the noise. To initiate a SSL session, a client will send a SSL Client Hello packet following the TCP 3-way handshake. This packet and the way in which it is generated is dependant on packages and methods used when building the client application. The server, if accepting SSL connections, will respond with a SSL Server Hello packet that is formulated based on server-side libraries and configurations as well as details in the Client Hello. Because SSL negotiations are transmitted in the clear, it’s possible to fingerprint and identify client applications using the details in the SSL Client Hello packet.
-
-JA3 is a method of TLS fingerprinting that was inspired by the [research](https://blog.squarelemon.com/tls-fingerprinting/) and works of [Lee Brotherston](https://twitter.com/synackpse) and his TLS Fingerprinting tool: [FingerprinTLS](https://github.com/LeeBrotherston/tls-fingerprinting/tree/master/fingerprintls). 
-
-JA3 gathers the decimal values of the bytes for the following fields in the Client Hello packet; SSL Version, Accepted Ciphers, List of Extensions, Elliptic Curves, and Elliptic Curve Formats. It then concatenates those values together in order, using a "," to delimit each field and a "-" to delimit each value in each field.
-
-The field order is as follows:
-```
-SSLVersion,Cipher,SSLExtension,EllipticCurve,EllipticCurvePointFormat
-```
-Example:
-```    
-769,47-53-5-10-49161-49162-49171-49172-50-56-19-4,0-10-11,23-24-25,0
-```
-If there are no SSL Extensions in the Client Hello, the fields are left empty. 
-
-Example:
-```   
-769,4-5-10-9-100-98-3-6-19-18-99,,,
-```
-These strings are then MD5 hashed to produce an easily consumable and shareable 32 character fingerprint. This is the JA3 SSL Client Fingerprint.
-```
-769,47-53-5-10-49161-49162-49171-49172-50-56-19-4,0-10-11,23-24-25,0 --> ada70206e40642a3e4461f35503241d5
-769,4-5-10-9-100-98-3-6-19-18-99,,, --> de350869b8c85de67a350c8d186f11e6
-```
-We also needed to introduce some code to account for Google’s GREASE (Generate Random Extensions And Sustain Extensibility) as described [here](https://tools.ietf.org/html/draft-davidben-tls-grease-01). Google uses this as a mechanism to prevent extensibility failures in the TLS ecosystem.  JA3 ignores these values completely to ensure that programs utilizing GREASE can still be identified with a single JA3 hash.
-
-## JA3S
-
-JA3S is JA3 for the Server side of the SSL/TLS communication and fingerprints how servers respond to particular clients. 
-
-JA3S uses the following field order:
-```
-SSLVersion,Cipher,SSLExtension
-```
-With JA3S it is possible to fingerprint the entire cryptographic negotiation between client and it's server by combining JA3 + JA3S. That is because servers will respond to different clients differently but will always respond to the same client the same.
-
-For the Trickbot example:
-```
-JA3 = 6734f37431670b3ab4292b8f60f29984 ( Fingerprint of Trickbot )
-JA3S = 623de93db17d313345d7ea481e7443cf ( Fingerprint of Command and Control Server Response )
-```
-For the Emotet example:
-```
-JA3 = 4d7a28d6f2263ed61de88ca66eb011e3 ( Fingerprint of Emotet )
-JA3S = 80b3a14bccc8598a1f3bbe83e71f735f ( Fingerprint of Command and Control Server Response )
-```
-
-In these malware examples, the command and control server always responds to the malware client in exactly the same way, it does not deviate. So even though the traffic is encrypted and one may not know the command and control server's IPs or domains as they are constantly changing, we can still identify, with reasonable confidence, the malicious communication by fingerprinting the TLS negotiation between client and server. Again, please be aware that these are examples, not indicative of all versions ever, and are intended to illustrate what is possible.
-
-## Intriguing Possibilities
-
-JA3 is a much more effective way to detect malicious activity over SSL than IP or domain based IOCs. Since JA3 detects the client application, it doesn’t matter if malware uses DGA (Domain Generation Algorithms), or different IPs for each C2 host, or even if the malware uses Twitter for C2, JA3 can detect the malware itself based on how it communicates rather than what it communicates to.
-
-JA3 is also an excellent detection mechanism in locked-down environments where only a few specific applications are allowed to be installed. In these types of environments one could build a whitelist of expected applications and then alert on any other JA3 hits.
-
-For more details on what you can see and do with JA3 and JA3S, please see this DerbyCon 2018 talk: https://www.youtube.com/watch?v=NI0Lmp0K1zc or this [blog post.](https://engineering.salesforce.com/tls-fingerprinting-with-ja3-and-ja3s-247362855967)
-
-Please contact me on twitter @4A4133 or over email, let me know what you find and if you have any feature requests. 
-
-___  
-### JA3 Created by
-
-[John Althouse](https://www.linkedin.com/in/johnalthouse/)  
-[Jeff Atkinson](https://www.linkedin.com/in/annh/)  
-[Josh Atkins](https://www.linkedin.com/in/joshratkins/)  
-
-Please send questions and comments to **[John Althouse](https://twitter.com/4A4133)**.
-
-
-
-# Janus-swi: a bi-directional interface between SWI-Prolog and Python
-
-This  code  implements  a  ready-to-use  bi-directional  interface  to
-Python.  As  motivated by Theresa  Swift, Python opens many  doors for
-accessing resources such as graphics, machine learning and many more.
-
-The  API defined  in this  interface has  been established  as a  PIP,
-_Prolog Improvement Proposal_.  When the PIP is finished and published
-we  will  properly  reference  it.  The  main  predicates  and  Python
-functions of this interface are compatible with the XSB Python package
-`janus_xsb`.   Both `janus_swi`  and `janus_xsb`  implement extensions
-upon  the   agreed  interface.   For  example,   `janus_swi`  supports
-SWI-Prolog dicts and defines thread synchronization between Prolog and
-Python.
-
-## Documentation
-
-See [SWI-Prolog manual](https://www.swi-prolog.org/pldoc/package/janus)
-
-## Bi-directional
-
-This  GIT repository  is a  GIT _submodule_  of the  SWI-Prolog source
-repository.  As part of the  SWI-Prolog source distribution it is used
-to build `library(janus)`, a Prolog  library that embeds Python.  This
-same  module can  be  used  stand-alone to  build  the Python  package
-`janus_swi` that embeds Prolog into  Python.  Loaded either way, Janus
-is the same and allows for mutually recursive calls between Prolog and
-Python.
-
-
-## Embedding Prolog into Python: the Python janus_swi package
-
-If  this  repository   is  used  to  build  the   Python  pip  package
-`janus_swi`, we can  load SWI-Prolog into Python  and call predicates.
-For example:
-
-    python
-	>>> import janus_swi as janus
-	>>> janus.query_once("writeln('Hello world!')")
-	Hello world!
-	{'truth': True}
-	>>>
-
-The    Python    package    is     available    from    __PyPi__    as
-[janus-swi](https://pypi.org/project/janus-swi/).      We    currently
-provide  a few  _wheels_ for  Windows.   The binaries  in the  Windows
-_wheel_ probably supports all Python and Prolog versions that are also
-supported by  the source.   The package can  be installed  using `pip`
-from source on any system with CPython 3.6 or later, SWI-Prolog 9.1.12
-or later and a  C compiler.  For compiling the C  code, GCC, Clang and
-VS2022 have been tested.  Thus,  normally the package can be installed
-using
-
-    pip install janus-swi
-
-SWI-Prolog is  selected by  finding `swipl`  on the  executable search
-path.   If `swipl.exe`  is not  in ``%PATH%``  on Windows  the Windows
-registry is examined to find SWI-Prolog.
-
-If  you installed  SWI-Prolog from  source, it  is advices  to install
-Janus from the  `packages/swipy` directory in the  Prolog source.  The
-package can be installed from within this directory using
-
-    pip install .
-
-
-## Embedding Python into Prolog: library(janus)
-
-Configuration and installation of `library(janus)` which embeds Python
-into Prolog is  handled by the normal  Prolog configuration.  Building
-the  interface  requires  the  libraries  and  C  headers  for  Python
-embedding to be installed.   Below are the commands for installing the
-embedded Python engine for Ubuntu and Fedora Linux.
-
-    apt install python3 libpython3-dev   # Ubuntu
-    dnf install python3-devel            # Fedora
-
-If  you need  to  build  Python, the  following  command is  suggested
-(assuming you wish to install  it in `$HOME/.local/bin`). You may also
-need the option `--enable-shared`.
-
-    CFLAGS='-fPIC' CCSHARED='-fPIC' ./configure --prefix=$HOME/.local --enable-optimizations
-    make -j8   # change "8" to the number of CPUs on your machine
-    make install
-
-On __MacOS__,  these files are  included in the Homebrew  and Macports
-versions of Python
-
-On  Windows,  these  files  are included  in  the  default  installer.
-Configuration requires Python to appear in ``%PATH%``.
-
-After successful installation, running `py_version/0` should result in
-printing relevant information on the embedded Python system.
-
-    ?- py_version.
-	% Janus embeds Python 3.10.12 (main, Jun 11 2023, 05:26:28) [GCC 11.4.0
-
-
-## Using Conda
-
-Ongoing work  to get SWI-Prolog  working under  Conda can be  found at
-https://github.com/SWI-Prolog/swi-prolog-feedstock.   Eventually, this
-work shall be merged with https://anaconda.org/conda-forge/swi-prolog
-
-As  is,  https://github.com/SWI-Prolog/swi-prolog-feedstock  has  been
-used  to build  the full  SWI-Prolog  system with  Janus interface  on
-Linux, MacOS and Windows.
-
-
-## Alternatives
-
-### MQI (Machine Query Interface)
-
-SWI-Prolog               comes              bundled               with
-[MQI](https://www.swi-prolog.org/pldoc/package/mqi).  MQI is initiated
-from  Python and  starts SWI-Prolog  as a  server.  It  allows calling
-Prolog from Python.  Separated using networking, this approach is easy
-to  install and  runs  with any  Python version.   It  does not  allow
-calling Python  from Prolog, the  primary reason for the  existence of
-this package.  Using networking, the latency is relatively high.
-
-### pyswip
-
-The   [pyswip](https://github.com/yuce/pyswip)   interface  uses   the
-[Python    ctypes](https://docs.python.org/3/library/ctypes.html)   to
-embed Prolog into Python.  Only relying  on _ctypes_, the package is a
-fully portable Python package that supports a wide range of Python and
-Prolog versions.
-
-Unlike this  package, embedding  Python into  Prolog is  not possible.
-_pyswip_ calls Prolog, similarly than janus, using a string.  However,
-where  janus allows  passing input  to the  goal as  a _dict_  that is
-transferred using the C API  rather than strings, _pyswip_ also passes
-the  input as  a  string.   This is  slower,  sensitive to  _injection
-attacks_  and   complicated  because  the  user   is  responsible  for
-generating  valid Prolog  syntax.   Calls from  Prolog  to Python  are
-possible by defining a Prolog  predicate from Python.  This only seems
-to support  deterministic predicates and  it cannot pass data  back to
-Prolog.  Janus supports calling  Python functions and methods directly
-and  supports  enumerating  Python  _iterators_  and  _generators_  as
-non-deterministic goals using py_iter/2.
-
-The  overhead of  Janus is  roughly 5  times less  than _pyswip_.   As
-_pyswip_ still sustains over 100K  calls per second this is irrelevant
-to many applications.
-
-
 This file is an extract from the the online documentation at
 https://github.com/stamparm/pcapy-ng/blob/master/README.md
 
@@ -1137,580 +1112,3 @@ Contact Us
 Whether you want to report a bug, send a patch or give some
 suggestions on this package, drop a few lines at
 miroslav@sqlmap.org.
-
-
-========================================================
-pyOpenSSL -- A Python wrapper around the OpenSSL library
-========================================================
-
-.. image:: https://readthedocs.org/projects/pyopenssl/badge/?version=stable
-   :target: https://pyopenssl.org/en/stable/
-   :alt: Stable Docs
-
-.. image:: https://github.com/pyca/pyopenssl/workflows/CI/badge.svg?branch=main
-   :target: https://github.com/pyca/pyopenssl/actions?query=workflow%3ACI+branch%3Amain
-
-**Note:** The Python Cryptographic Authority **strongly suggests** the use of `pyca/cryptography`_
-where possible. If you are using pyOpenSSL for anything other than making a TLS connection
-**you should move to cryptography and drop your pyOpenSSL dependency**.
-
-High-level wrapper around a subset of the OpenSSL library. Includes
-
-* ``SSL.Connection`` objects, wrapping the methods of Python's portable sockets
-* Callbacks written in Python
-* Extensive error-handling mechanism, mirroring OpenSSL's error codes
-
-... and much more.
-
-You can find more information in the documentation_.
-Development takes place on GitHub_.
-
-
-Discussion
-==========
-
-If you run into bugs, you can file them in our `issue tracker`_.
-
-We maintain a cryptography-dev_ mailing list for both user and development discussions.
-
-You can also join ``#pyca`` on ``irc.libera.chat`` to ask questions or get involved.
-
-
-.. _documentation: https://pyopenssl.org/
-.. _`issue tracker`: https://github.com/pyca/pyopenssl/issues
-.. _cryptography-dev: https://mail.python.org/mailman/listinfo/cryptography-dev
-.. _GitHub: https://github.com/pyca/pyopenssl
-.. _`pyca/cryptography`: https://github.com/pyca/cryptography
-
-
-<p align="center">
-	<img width="105" height="176" src="./pypacker_logo_large.png">
-</p>
-
-[![Build Status](https://travis-ci.org/mike01/pypacker.svg?branch=master)](https://travis-ci.org/mike01/pypacker)
-[![version](http://img.shields.io/pypi/v/pypacker.svg)](https://pypi.python.org/pypi/pypacker)
-[![supported-versions](https://img.shields.io/pypi/pyversions/pypacker.svg)](https://pypi.python.org/pypi/pypacker)
-[![supported-implementations](https://img.shields.io/pypi/implementation/pypacker.svg)](https://pypi.python.org/pypi/pypacker)
-[![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](LICENSE)
-
-# General information
-This is Pypacker: The fastest and simplest low-level packet manipulation library for Python.
-See below examples for what you can do with it.
-
-If you want to support this project you can [![Donate with PayPal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_SM.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=M6GGAXJQCUHVC&source=url) via PayPal.
-
-## What you can do with Pypacker
-Create custom Packets via keywords or from raw bytes and access/change their data:
-
-```python
-from pypacker.layer3 import ip
-from pypacker.layer3 import icmp
-
-# Packet via keywords
-ip0 = ip.IP(src_s="127.0.0.1", dst_s="192.168.0.1", p=1) +\
-	icmp.ICMP(type=8) +\
-	icmp.ICMP.Echo(id=123, seq=1, body_bytes=b"foobar")
-
-# Packet from raw bytes. ip1_bts can also be retrieved via ip0.bin()
-ip1_bts = b"E\x00\x00*\x00\x00\x00\x00@\x01;)\x7f\x00\x00\x01\xc0\xa8\x00\x01\x08\x00\xc0?\x00{\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00foobar"
-ip1 = ip.IP(ip1_bts) 
-
-# Output packet (similar result for ip1)
-print("%s" % ip0)
-layer3.ip.IP
-        v_hl         (B): 0x45 = 69 = 0b1000101
-        tos          (B): 0x0 = 0 = 0b0
-        len          (H): 0x22 = 34 = 0b100010
-        id           (H): 0x0 = 0 = 0b0
-        frag_off     (H): 0x0 = 0 = 0b0
-        ttl          (B): 0x40 = 64 = 0b1000000
-        p            (B): 0x1 = 1 = 0b1 = IP_PROTO_ICMP
-        sum          (H): 0x3B31 = 15153 = 0b11101100110001
-        src          (4): b'\x7f\x00\x00\x01' = 127.0.0.1
-        dst          (4): b'\xc0\xa8\x00\x01' = 192.168.0.1
-        opts            : []
-layer3.icmp.ICMP
-        type         (B): 0x8 = 8 = 0b1000 = ICMP_ECHO
-        code         (B): 0x0 = 0 = 0b0
-        sum          (H): 0xC03F = 49215 = 0b1100000000111111
-layer3.icmp.Echo
-        id           (H): 0x7B = 123 = 0b1111011
-        seq          (H): 0x1 = 1 = 0b1
-        bodybytes    (6): b'foobar'
-
-# Access any header fields on any layer
-ip_dst = ip1.dst_s
-icmp_type = ip1.higher_layer.type
-
-# Access layers via advanced filter (e.g. on unknown packet structure)
-ip0_found, icmp0_found, echo0_found = pkt[
-	(None, lambda b: b.__class__ == ip.IP),
-	icmp.ICMP,
-	(icmp.ICMP.Echo, lambda b: b.id == 123)
-]
-
-if echo0_found is not None:
-	print(echo0_found)
-
-# Change source IPv4 address
-ip1.src_s = "1.2.3.4"
-
-# Change ICMP payload
-ip1.highest_layer.body_bytes = b"foobar2"
-```
-
-
-Read/write packets from/to file (Support only for Wireshark/tcpdump pcap format):
-
-```python
-from pypacker import ppcap
-from pypacker.layer12 import ethernet
-from pypacker.layer3 import ip, ip6
-from pypacker.layer4 import tcp
-from pypacker.layer567 import http
-
-preader = ppcap.Reader(filename="ether.pcap")
-pwriter = ppcap.Writer(filename="ether_new.pcap", linktype=ppcap.DLT_EN10MB)
-
-for ts, buf in preader:
-	pkt = ethernet.Ethernet(buf)
-
-	# Filter specific packets
-	eth0, ip0, tcp0, http0 = pkt[
-		None,
-		(None, lambda b: b.__class__ in [ip.IP, ip6.IP6]),
-		(tcp.TCP, lambda c: c.dport==80),
-		http.HTTP
-	]
-
-	if eth0 is not None:
-		print(f"{ts}: {ip0.src_s}:{tcp0.sport} -> {ip0.dst_s}:{tcp0.dport}")
-		pwriter.write(eth0.bin())
-
-pwriter.close()
-```
-
-Merge multiple pcap files to one file. Tries to read corrupted pcap files and allows filtering by pypacker callback.
-```
-from pypacker import ppcap
-from pypacker.layer4 import tcp
-
-def filter_accept(bts):
-    # Get all TCP packets
-    pkt = ethernet.Ethernet(bts)
-    return pkt[tcp.TCP] is not None
-
-ppcap.merge_pcaps(["file_in1.pcap", "file_in2.pcap"], "file_out.pcap", filter_accept=filter_accept)
-```
-
-Send/receive layer 2 (and higher)  packets:
-
-```python
-from pypacker import psocket
-from pypacker.layer12 import ethernet
-from pypacker.layer3 import ip
-from pypacker.layer4 import tcp
-
-psock = psocket.SocketHndl(timeout=10)
-
-def filter_pkt(pkt):
-	return pkt[None, ip.IP, (tcp.TCP, lambda p: p.sport == 80)][2] is not None
-
-# Receive raw bytes
-for raw_bytes in psock:
-	eth = ethernet.Ethernet(raw_bytes)
-	print("Got packet: %r" % eth)
-	eth.reverse_address()
-	eth.higher_layer.reverse_address()
-	# Send bytes
-	psock.send(eth.bin())
-	# Receive (any) raw bytes
-	bts = psock.recv()
-	# Send/receive based on source/destination data in packet
-	pkts = psock.sr(eth)
-	# Use filter to get specific packets
-	pkts = psock.recvp(filter_match_recv=filter_pkt)
-	# stop on first packet
-	break
-
-psock.close()
-```
-
-Intercept (and modificate) Packets e.g. for MITM:
-
-```python
-# Add iptables rule:
-# iptables -I INPUT 1 -p icmp -j NFQUEUE --queue-balance 0:2
-# Alternatively add nftables rule:
-# nft add table inet pptable
-# nft add chain inet pptable filter { type filter hook input priority 0 \; policy accept\; }
-# nft add rule inet pptable filter counter queue num 0-2
-import time
-
-from pypacker import interceptor
-from pypacker.layer3 import ip, icmp
-
-# ICMP Echo request intercepting
-def verdict_cb(ll_data, ll_proto_id, data, ctx, *args):
-	ip1 = ip.IP(data)
-	icmp1 = ip1[icmp.ICMP]
-
-	if icmp1 is None or icmp1.type != icmp.ICMP_ECHO:
-		return data, interceptor.NF_ACCEPT
-
-	echo1 = icmp1[icmp.ICMP.Echo]
-
-	if echo1 is None:
-		return data, interceptor.NF_ACCEPT
-
-	pp_bts = b"PYPACKER"
-	print("changing ICMP echo request packet")
-	echo1.body_bytes = echo1.body_bytes[:-len(pp_bts)] + pp_bts
-	return ip1.bin(), interceptor.NF_ACCEPT
-
-ictor = interceptor.Interceptor()
-ictor.start(verdict_cb, queue_ids=[0, 1, 2])
-print("now sind a ICMP echo request to localhost: ping 127.0.0.1")
-time.sleep(999)
-ictor.stop()
-```
-
-
-## Prerequisites
-- Python 3.x (CPython, Pypy, Jython or whatever Interpreter)
-- Optional: netifaces >=0.10.6 (for utils)
-- Optional (for interceptor):
-  - CPython
-  - Linux based system with kernel support for NFQUEUE target. The kernel config option is at:
-	- Networking Options -> Network packet filtering -> Core Netfilter -> NFQUEUE target
-  - iptables (alternatively nftables)
-    - NFQUEUE related rulez can be added eg "iptables -I INPUT 1 -j NFQUEUE --queue-num 0"
-  - libnetfilter_queue library (see http://www.netfilter.org/projects/libnetfilter_queue)
-
-## Installation
-Some examples:
-- Clone newest version
-  - git clone https://gitlab.com/mike01/pypacker.git
-  - cd pypacker
-  - python setup.py install
-- Use pip (synched to master on major version changes)
-  - pip install pypacker
-
-## Usage examples and documentation
-See:
-
-- Above examples
-- Examples in directory ./examples
-- Gitlab Wiki: https://gitlab.com/mike01/pypacker/-/wikis/home
-
-Protocols itself (see layerXYZ) generally don't have much documentation because those are documented
-by their respective RFCs/official standards.
-
-## Testing
-Tests are executed as follows:
-
-1) Add Pypacker directory to the PYTHONPATH.
-
-- `cd pypacker`
-- `export PYTHONPATH=$(pwd):$PYTHONPATH`
-
-2) Execute tests
-
-- `python tests/test_pypacker.py`
-
-**Performance test results:**
-```
-Hardware: Intel CPU, 4 Cores @ 3.2 GHz
-Python: CPython v3.10.13
-
-nr = new results on this machine
-rounds per test: 10000
-=====================================
->>> Packet parsing (Ethernet + IP + UDP + DNS): Search UDP port
-Time diff: 0.3220548629760742s
-nr = 31050 p/s
->>> Packet parsing (Ethernet + IP + TCP + HTTP): Search TCP port
-Time diff: 0.5902166366577148s
-nr = 16942 p/s
->>> Packet parsing (Ethernet + IP + TCP + HTTP): Reading all header
-Time diff: 0.9773461818695068s
-nr = 10231 p/s
->>> Parsing first layer (IP + ICMP)
-Time diff: 0.04322528839111328s
-nr = 231346 p/s
->>> Creating/direct assigning (IP only header)
-Time diff: 0.06982040405273438s
-nr = 143224 p/s
->>> bin() without change (IP)
-Time diff: 0.02322697639465332s
-nr = 430533 p/s
->>> Output with change/checksum recalculation (IP)
-Time diff: 0.18998193740844727s
-nr = 52636 p/s
->>> Basic/first layer parsing (Ethernet + IP + TCP + HTTP)
-Time diff: 0.048027992248535156s
-nr = 208211 p/s
->>> Changing Triggerlist element value (Ethernet + IP + TCP + HTTP)
-Time diff: 0.04828596115112305s
-nr = 207099 p/s
->>> Changing dynamic field (Ethernet + IP + TCP + HTTP)
-Time diff: 0.016223669052124023s
-nr = 616383 p/s
->>> Direct assigning and concatination (Ethernet + IP + TCP + HTTP)
-Time diff: 0.3817322254180908s
-nr = 26196 p/s
->>> Performance test pypacker vs. dpkt vs. scapy
-Comparing pypacker, dpkt and scapy performance (parsing Ethernet + IP + TCP + HTTP)
-nr = new results on this machine
-rounds per test: 10000
->>> testing pypacker parsing speed
-nr = 74695 p/s
-Could not execute dpkt tests: ModuleNotFoundError("No module named 'dpkt'")
->>> testing scapy parsing speed
-nr = 1732 p/s
-```
-
-# FAQ
-
-For any questions left please file a bug (will be tagged as "questions").
-
-**Q**:	How fast is pypacker?
-
-**A**:	See results above. For detailed results on your machine execute tests:
-	`python tests/test_pypacker.py PerfTestCase`
-
-**Q**:	Which protocols are supported?
-
-**A**:	Currently minimum supported protocols are:
-	Ethernet, Radiotap, IEEE80211, ARP, DNS, STP, PPP, OSPF, VRRP, DTP, IP, ICMP, PIM, IGMP, IPX,
-	TCP, UDP, SCTP, HTTP, NTP, RTP, DHCP, RIP, SIP, Telnet, HSRP, Diameter, SSL, TPKT, Pmap, Radius, BGP
-
-**Q**:	Are there any plans to support [xyz]?
-
-**A**:	New features are added to Pypacker as a result of me needing them or people contributing
-	them - no formal plans for adding support for particular features in future releases exist.
-	A general guideline for contribution can be found in the file HACKING.
-
-**Q**:	How can I contribute to this project?
-
-**A**:	Please use the Gitlab bug-tracker for bugs/feature request. Please read the bugtracker for
-	already known bugs before filing a new one. Patches can be send via pull request.
-
-**Q**:	There is problem xyz with Pypacker using Windows 3.11/XP/7/8/mobile etc. Can you fix that?
-
-**A**:	The basic features should work with any OS. Optional ones may make trouble (eg interceptor).
-
-**Q**:	Under which license Pypacker is issued?
-
-**A**:	It's the GPLv2 License (see LICENSE file for more information).
-
-**Q**:	Calling copy.deepcopy(some_packet) raises an exception "TypeError: can't pickle Struct objects".
-
-**A**:	Try the following workaround to be able to pickle Struct objects:
-```python
-import struct, copyreg
-def pickle_struct(s):
-	return struct.Struct, (s.format,)
-
-copyreg.pickle(struct.Struct, pickle_struct)
-```
-
-
-# Usage hints
-## Performance related
-- For maxmimum performance start accessing attributes at lowest level via the following index notation.
-  This will lazy parse only needed layers behind the scenes:
-```
-pkt_eth, pkt_ip, pkt_tcp, pkt_http = pkt[
-  None,
-  (None, lambda b: b.__class__ in [ip.IP, ip6.IP6]),
-  (tcp.TCP, lambda c: c.dport==80),
-  http.HTTP
-]
-...
-```
-
-- Avoid to convert packets using the "%s" or "%r" format as it triggers parsing behind the scene:
-```
-pkt = Ethernet() + IP() + TCP()
-# This parses ALL layers
-packet_print = "%s" % pkt
-```
-
-- Avoid searching for a layer using single-value index-notation via pkt[L] as it parses all layers until L is found or highest layer is reached:
-```
-packet_found = pkt[Telnet]
-# Alternative: Use multi-value index-notation. This will stop parsing at any non-matching layer:
-packet_found = pkt[Ethernet,IP,TCP,Telnet]
-```
-
-- Use pypy (~3x faster than CPython related to full packet parsing)
-
-- For even more performance disable auto fields (affects calling bin(...)):
-```
-pkt = ip.IP(src_s="1.2.3.4", dst_s="1.2.3.5") + tcp.TCP()
-# Disable checksum calculation (and any other update) for IP and TCP (only THIS packet instance)
-pkt.sum_au_active = False
-pkt.tcp.sum_au_active = False
-bts = pkt.bin(update_auto_fields=False)
-```
-
-- Enlarge receive/send buffers to get max performance. This can be done using the following commands
-	(taken from: http://www.cyberciti.biz/faq/linux-tcp-tuning/):
-```
-sysctl -w net.core.rmem_max=12582912
-sysctl -w net.core.rmem_default=12582912
-sysctl -w net.core.wmem_max=12582912
-sysctl -w net.core.wmem_default=12582912
-sysctl -w net.core.optmem_max=2048000
-sysctl -w net.core.netdev_max_backlog=5000
-sysctl -w net.unix.max_dgram_qlen=1000
-sysctl -w net.ipv4.tcp_rmem="10240 87380 12582912"
-sysctl -w net.ipv4.tcp_wmem="10240 87380 12582912"
-sysctl -w net.ipv4.tcp_mem="21228 87380 12582912"
-sysctl -w net.ipv4.udp_mem="21228 87380 12582912"
-sysctl -w net.ipv4.tcp_window_scaling=1
-sysctl -w net.ipv4.tcp_timestamps=1
-sysctl -w net.ipv4.tcp_sack=1
-```
-
-## Misc related
-- Assemblation of TCP/UDP streams can be done by tshark using pipes
-	with "-i -" and "-z follow,prot,mode,filter[,range]"
-- Chosing the right "lowest layer" when reading capture files: Open the file eg w/ wireshark
-  and look at the packet details for the data link layer. Most times this will probably
-  be Ethernet II which can be parsed w/ layer12.ethernet.Ethernet.
-  When capturing eg via wiresharks/tsharks "-i any" option, this will lead to Linux cooked capture
-  represented by layer12.linuxcc.LinuxCC.
-
-
-<div align="center">
-  <img src="https://storage.googleapis.com/tf_model_garden/tf_model_garden_logo.png">
-</div>
-
-[![Python](https://img.shields.io/pypi/pyversions/tensorflow.svg?style=plastic)](https://badge.fury.io/py/tensorflow)
-[![tf-models-official PyPI](https://badge.fury.io/py/tf-models-official.svg)](https://badge.fury.io/py/tf-models-official)
-
-
-# Welcome to the Model Garden for TensorFlow
-
-The TensorFlow Model Garden is a repository with a number of different
-implementations of state-of-the-art (SOTA) models and modeling solutions for
-TensorFlow users. We aim to demonstrate the best practices for modeling so that
-TensorFlow users can take full advantage of TensorFlow for their research and
-product development.
-
-To improve the transparency and reproducibility of our models, training logs on
-[TensorBoard.dev](https://tensorboard.dev) are also provided for models to the
-extent possible though not all models are suitable.
-
-| Directory | Description |
-|-----------|-------------|
-| [official](official) | • A collection of example implementations for SOTA models using the latest TensorFlow 2's high-level APIs<br />• Officially maintained, supported, and kept up to date with the latest TensorFlow 2 APIs by TensorFlow<br />• Reasonably optimized for fast performance while still being easy to read<br /> For more details on the capabilities, check the guide on the [Model-garden](https://www.tensorflow.org/tfmodels)|
-| [research](research) | • A collection of research model implementations in TensorFlow 1 or 2 by researchers<br />• Maintained and supported by researchers |
-| [community](community) | • A curated list of the GitHub repositories with machine learning models and implementations powered by TensorFlow 2 |
-| [orbit](orbit) | • A flexible and lightweight library that users can easily use or fork when writing customized training loop code in TensorFlow 2.x. It seamlessly integrates with `tf.distribute` and supports running on different device types (CPU, GPU, and TPU). |
-
-## Installation
-
-To install the current release of tensorflow-models, please follow any one of the methods described below.
-
-#### Method 1: Install the TensorFlow Model Garden pip package
-
-<details>
-
-**tf-models-official** is the stable Model Garden package. Please check out the [releases](https://github.com/tensorflow/models/releases) to see what are available modules.
-
-pip3 will install all models and dependencies automatically.
-
-```shell
-pip3 install tf-models-official
-```
-
-Please check out our examples:
-  - [basic library import](https://github.com/tensorflow/models/blob/master/tensorflow_models/tensorflow_models_pypi.ipynb)
-  - [nlp model building](https://github.com/tensorflow/models/blob/master/docs/nlp/index.ipynb)
-to learn how to use a PIP package.
-
-Note that **tf-models-official** may not include the latest changes in the master branch of this
-github repo. To include latest changes, you may install **tf-models-nightly**,
-which is the nightly Model Garden package created daily automatically.
-
-```shell
-pip3 install tf-models-nightly
-```
-
-</details>
-
-
-#### Method 2: Clone the source
-
-<details>
-
-1. Clone the GitHub repository:
-
-```shell
-git clone https://github.com/tensorflow/models.git
-```
-
-2. Add the top-level ***/models*** folder to the Python path.
-
-```shell
-export PYTHONPATH=$PYTHONPATH:/path/to/models
-```
-
-If you are using in a Windows environment, you may need to use the following command with PowerShell:
-```shell
-$env:PYTHONPATH += ":\path\to\models"
-```
-
-If you are using a Colab notebook, please set the Python path with os.environ.
-
-```python
-import os
-os.environ['PYTHONPATH'] += ":/path/to/models"
-```
-
-3. Install other dependencies
-
-```shell
-pip3 install --user -r models/official/requirements.txt
-```
-
-Finally, if you are using nlp packages, please also install
-**tensorflow-text-nightly**:
-
-```shell
-pip3 install tensorflow-text-nightly
-```
-
-</details>
-
-
-## Announcements
-
-Please check [this page](https://github.com/tensorflow/models/wiki/Announcements) for recent announcements.
-
-## Contributions
-
-[![help wanted:paper implementation](https://img.shields.io/github/issues/tensorflow/models/help%20wanted%3Apaper%20implementation)](https://github.com/tensorflow/models/labels/help%20wanted%3Apaper%20implementation)
-
-If you want to contribute, please review the [contribution guidelines](https://github.com/tensorflow/models/wiki/How-to-contribute).
-
-## License
-
-[Apache License 2.0](LICENSE)
-
-## Citing TensorFlow Model Garden
-
-If you use TensorFlow Model Garden in your research, please cite this repository.
-
-```
-@misc{tensorflowmodelgarden2020,
-  author = {Hongkun Yu, Chen Chen, Xianzhi Du, Yeqing Li, Abdullah Rashwan, Le Hou, Pengchong Jin, Fan Yang,
-            Frederick Liu, Jaeyoun Kim, and Jing Li},
-  title = {{TensorFlow Model Garden}},
-  howpublished = {\url{https://github.com/tensorflow/models}},
-  year = {2020}
-}
-```
