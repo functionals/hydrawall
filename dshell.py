@@ -25009,3 +25009,4059 @@ class TCP(pypacker.Packet):
 		return b"".join(bts_lst)
 
 
+"""Telnet."""
+from pypacker import pypacker, triggerlist
+from pypacker.structcbs import pack_B
+
+IAC	= 255		# interpret as command:
+DONT	= 254		# you are not to use option
+DO	= 253		# please, you use option
+WONT	= 252		# I won"t use option
+WILL	= 251		# I will use option
+SB	= 250		# interpret as subnegotiation
+GA	= 249		# you may reverse the line
+EL	= 248		# erase the current line
+EC	= 247		# erase the current character
+AYT	= 246		# are you there
+AO	= 245		# abort output--but let prog finish
+IP	= 244		# interrupt process--permanently
+BREAK	= 243		# break
+DM	= 242		# data mark--for connect. cleaning
+NOP	= 241		# nop
+SE	= 240		# end sub negotiation
+EOR	= 239		# end of record (transparent mode)
+ABORT	= 238		# Abort process
+SUSP	= 237		# Suspend process
+XEOF	= 236		# End of file: EOF is already used...
+
+SYNCH	= 242		# for telfunc calls
+
+TELNET_OPTION_START	= b"\xff\xaa"
+TELNET_OPTION_END	= b"\xff\x00"
+
+
+class Telnet(pypacker.Packet):
+	__hdr__ = (
+		("telnet_data", None, triggerlist.TriggerList),
+	)
+
+	def _dissect(self, buf):
+		self.telnet_data(buf, self._parse_data)
+		return len(buf)
+
+	@staticmethod
+	def _parse_data(buf):
+		off = 0
+		t_data = []
+		t_len = len(buf)
+
+		# Parse telnet data:
+		# fffaXX = start of options
+		# fff0 = end of options
+		# Search needed, convert to bytes
+		buf = buf.tobytes()
+
+		while off < t_len:
+			if buf[off: off + 2] == TELNET_OPTION_START:
+				# Add start marker
+				t_data.append(buf[off: off + 3])
+				off += 3
+				# Find end of option
+				idx_end = buf.find(TELNET_OPTION_END, off)
+				# Add option data
+				t_data.append(buf[off: idx_end + 1])
+				# Add end marker
+				t_data.append(TELNET_OPTION_END)
+				off = idx_end + 2
+			else:
+				# Add command
+				t_data.append(buf[off: off + 3])
+				off += 3
+		return t_data
+
+
+def strip_options(buf):
+	"""Return a list of lines and dict of options from telnet data."""
+	tokens = buf.split(pack_B(IAC))
+	b = []
+	d = {}
+	subopt = False
+	for w in tokens:
+		if not w:
+			continue
+		o = w[0]
+		if o > SB:
+			# logger.debug("WILL/WONT/DO/DONT/IAC", "w")
+			w = w[2:]
+		elif o == SE:
+			# logger.debug("SE", "w")
+			w = w[1:]
+			subopt = False
+		elif o == SB:
+			# logger.debug("SB", "w")
+			subopt = True
+			for opt in (b"USER", b"DISPLAY", b"TERM"):
+				p = w.find(opt + b"\x01")
+				if p != -1:
+					d[opt] = w[p + len(opt) + 1:].split(b"\x00", 1)[0]
+			w = None
+		elif subopt:
+			w = None
+		if w:
+			w = w.replace(b"\x00", b"\n").splitlines()
+			if not w[-1]:
+				w.pop()
+			b.extend(w)
+	return b, d
+"""
+TFTP Plugin
+In short:
+ Goes through UDP traffic, packet by packet, and ties together TFTP file
+ streams. If the command line argument is set (--tftp_rip), it will dump the
+ files to a directory (--tftp_outdir=<DIR>)
+
+In long:
+ Goes through each UDP packet and parses out the TFTP opcode. For read or
+ write requests, it sets a placeholder in unset_read_streams or unset_write_streams,
+ respectively. These placeholders are moved to open_streams when we first see
+ data for the read request or an ACK code for a write request. The reason for
+ these placeholders is to allow the server to set the ephemeral port during
+ data transfer.
+
+ When it sees a DATA packet, it stores the data under the IP-port-IP-port
+ openStream key as 'filedata'. Each of these data packets has an ordered block
+ number, and the file data is stored under that block number. It is reassembled
+ later. When we consider a stream finished (either the DATA packet is too short
+ or there are no more packets), we rebuild the file data, print information
+ about the stream, dump the file (optional), and move the information from
+ open_streams to closed_streams.
+
+Example:
+ Running on sample pcap available here: https://wiki.wireshark.org/TFTP
+ With default values, it will display transfers performed
+   Dshell> decode -d tftp ~/pcap/tftp_*.pcap
+    tftp 2013-05-01 08:24:11    192.168.0.253:50618 --     192.168.0.10:3445  ** read rfc1350.txt (24599 bytes)  **
+    tftp 2013-04-27 05:07:59      192.168.0.1:57509 --     192.168.0.13:2087  ** write rfc1350.txt (24599 bytes)  **
+ With the --tftp_rip flag, it will generate the same output while reassembling
+ the files and saving them in a defined directory (./tftp_out by default)
+   Dshell> decode -d tftp --tftp_rip --tftp_outdir=./MyTFTP ~/pcap/tftp_*.pcap
+    tftp 2013-05-01 08:24:11    192.168.0.253:50618 --     192.168.0.10:3445  ** read rfc1350.txt (24599 bytes)  **
+    tftp 2013-04-27 05:07:59      192.168.0.1:57509 --     192.168.0.13:2087  ** write rfc1350.txt (24599 bytes)  **
+   Dshell> ls ./MyTFTP/
+    rfc1350.txt  rfc1350.txt_01
+ Note: The two files have the same name in the traffic, but have incremented
+ filenames when saved
+"""
+
+
+class DshellPlugin(dshell.core.PacketPlugin):
+    "Primary plugin class"
+    # packet opcodes (http://www.networksorcery.com/enp/default1101.htm)
+    RRQ = 1  # read request
+    WRQ = 2  # write request
+    DATA = 3
+    ACK = 4
+    ERROR = 5
+    OACK = 6  # option acknowledgment
+
+    def __init__(self, **kwargs):
+        super().__init__(
+            name="tftp",
+            bpf="udp",
+            description="Find TFTP streams and, optionally, extract the files",
+            author="dev195",
+            output=AlertOutput(label=__name__),
+            optiondict={
+                "rip": {
+                    "action": "store_true",
+                    "help": "Rip files from traffic (default: off)",
+                    "default": False},
+                "outdir": {
+                    "help": "Directory to place files when using --rip (default: tftp_out)",
+                    "default": "./tftp_out",
+                    "metavar": "DIRECTORY"}
+            }
+        )
+
+        # default information for streams we didn't see the start for
+        self.default_stream = {
+            'filename': '',
+            'mode': '',
+            'readwrite': '',
+            'closed_connection': False,
+            'filedata': {},
+            'timestamp': 0
+        }
+
+        # containers for various states of streams
+        self.open_streams = {}
+        self.closed_streams = []
+        # These two are holders while waiting for the server to decide on which
+        # ephemeral port to use
+        self.unset_write_streams = {}
+        self.unset_read_streams = {}
+
+    def premodule(self):
+        "if needed, create the directory for file output"
+        if self.rip and not os.path.exists(self.outdir):
+            try:
+                os.makedirs(self.outdir)
+            except OSError:
+                self.error("Could not create directory {!r}. Files will not be dumped.".format(self.outdir))
+                self.rip = False
+
+    def postmodule(self):
+        "cleanup any unfinished streams"
+        self.logger.debug("Unset Read Streams: {!s}".format(self.unset_read_streams))
+        self.logger.debug("Unset Write Streams: {!s}".format(self.unset_write_streams))
+        while(len(self.open_streams) > 0):
+            k = list(self.open_streams)[0]
+            self.__closeStream(k, "POSSIBLY INCOMPLETE")
+
+    def packet_handler(self, pkt):
+        """
+        Handles each UDP packet. It checks the TFTP opcode and parses
+        accordingly.
+        """
+        udpp = pkt.pkt.upper_layer
+        while not isinstance(udpp, udp.UDP):
+            try:
+                udpp = udpp.upper_layer
+            except AttributeError:
+                # There doesn't appear to be a UDP layer, for some reason
+                return
+
+        data = udpp.body_bytes
+
+        try:
+            flag = struct.unpack("!H", data[:2])[0]
+        except struct.error:
+            return   # awful small packet
+        data = data[2:]
+        if flag == self.RRQ:
+            # this packet is requesting to read a file from the server
+            try:
+                filename, mode = data.split(b"\x00")[0:2]
+            except ValueError:
+                return  # probably not TFTP
+            clientIP, clientPort, serverIP, serverPort = pkt.sip, udpp.sport, pkt.dip, udpp.dport
+            self.unset_read_streams[(clientIP, clientPort, serverIP)] = {
+                'filename': filename,
+                'mode': mode,
+                'readwrite': 'read',
+                'closed_connection': False,
+                'filedata': {},
+                'timestamp': pkt.ts
+            }
+
+        elif flag == self.WRQ:
+            # this packet is requesting to write a file to the server
+            try:
+                filename, mode = data.split(b"\x00")[0:2]
+            except ValueError:
+                return  # probably not TFTP
+            # in this case, we are writing to the "server"
+            clientIP, clientPort, serverIP, serverPort = pkt.sip, udpp.sport, pkt.dip, udpp.dport
+            self.unset_write_streams[(clientIP, clientPort, serverIP)] = {
+                'filename': filename,
+                'mode': mode,
+                'readwrite': 'write',
+                'closed_connection': False,
+                'filedata': {},
+                'timestamp': pkt.ts
+            }
+
+        elif flag == self.DATA:
+            # this packet is sending a chunk of data
+            clientIP, clientPort, serverIP, serverPort = pkt.sip, udpp.sport, pkt.dip, udpp.dport
+            key = (clientIP, clientPort, serverIP, serverPort)
+            if key not in self.open_streams:
+                # this is probably an unset read stream; there is no
+                # acknowledgement, it just starts sending data
+                if (serverIP, serverPort, clientIP) in self.unset_read_streams:
+                    self.open_streams[key] = self.unset_read_streams[
+                        (serverIP, serverPort, clientIP)]
+                    del(self.unset_read_streams[
+                        (serverIP, serverPort, clientIP)])
+                else:
+                    self.open_streams[key] = self.default_stream
+            blockNum = struct.unpack("!H", data[:2])[0]
+            data = data[2:]
+            if len(data) < 512:
+                # TFTP uses fixed length data chunks. If it's smaller than the
+                # length, then the stream is finished
+                closedConn = True
+            else:
+                closedConn = False
+            self.open_streams[key]['filedata'][blockNum] = data
+            self.open_streams[key]['closed_connection'] = closedConn
+
+        elif flag == self.ACK:
+            # this packet has acknowledged the receipt of a data chunk or
+            # allows a write process to begin
+            blockNum = struct.unpack("!H", data[:2])[0]
+            clientIP, clientPort, serverIP, serverPort = pkt.sip, udpp.sport, pkt.dip, udpp.dport
+
+            # special case: this is acknowledging a write operation and sets
+            # the port for receiving
+            if blockNum == 0:
+                clientIP, clientPort, serverIP, serverPort = pkt.dip, udpp.dport, pkt.sip, udpp.sport
+                i = (clientIP, clientPort, serverIP)
+                if i in self.unset_write_streams:
+                    self.open_streams[
+                        (clientIP, clientPort, serverIP, serverPort)] = self.unset_write_streams[i]
+                    del(self.unset_write_streams[i])
+            # otherwise, check if this is the confirmation for the end of a
+            # connection
+            elif (clientIP, clientPort, serverIP, serverPort) in self.open_streams and self.open_streams[(clientIP, clientPort, serverIP, serverPort)]['closed_connection']:
+                self.__closeStream(
+                    (clientIP, clientPort, serverIP, serverPort))
+            elif (serverIP, serverPort, clientIP, clientPort) in self.open_streams and self.open_streams[(serverIP, serverPort, clientIP, clientPort)]['closed_connection']:
+                self.__closeStream(
+                    (serverIP, serverPort, clientIP, clientPort))
+
+        elif flag == self.ERROR:
+            # this package is sending an error message
+            # TODO handle more of these properly
+            errCode = struct.unpack("!H", data[:2])[0]
+            errMessage = data[2:].strip()
+            if errCode == 1:   # File not found
+                clientIP, clientPort, serverIP, serverPort = pkt.dip, udpp.dport, pkt.sip, udpp.sport
+                i = (clientIP, clientPort, serverIP)
+                if i in self.unset_read_streams:
+                    self.open_streams[
+                        (serverIP, serverPort, clientIP, clientPort)] = self.unset_read_streams[i]
+                    del(self.unset_read_streams[i])
+                self.__closeStream(
+                    (serverIP, serverPort, clientIP, clientPort), errMessage)
+
+        elif flag == self.OACK:
+            pass  # TODO handle options
+
+        return pkt
+
+    def __closeStream(self, key, message=''):
+        """
+        Called when a stream is finished. It moves the stream from
+        open_streams to closed_streams, prints output, and dumps the file
+        """
+        theStream = self.open_streams[key]
+        if not theStream['filename']:
+            message = "INCOMPLETE -- missing filename"
+        else:
+            theStream['filename'] = theStream['filename'].decode('utf-8', "backslashreplace")
+
+        # Rebuild the file from the individual blocks
+        rebuiltFile = b''
+        for i in sorted(theStream['filedata'].keys()):
+            rebuiltFile += theStream['filedata'][i]
+
+        # if we're reading, swap the client and server IP so the output better
+        # shows who requested the connection
+        if theStream['readwrite'] == 'read':
+            ipsNports = (key[2], key[3], key[0], key[1])
+        else:
+            ipsNports = key
+
+        # print out information about the stream
+        msg = "{:5} {} ({} bytes) {}".format(
+            theStream['readwrite'],
+            theStream['filename'],
+            len(rebuiltFile),
+            message)
+        self.write(msg, ts=theStream['timestamp'], sip=ipsNports[0],
+            sport=ipsNports[1], dip=ipsNports[2], dport=ipsNports[3],
+            readwrite=theStream['readwrite'], filename=theStream['filename'])
+
+        # dump the file, if that's what the user wants
+        if self.rip and len(rebuiltFile) > 0:
+            outpath = dshell.util.gen_local_filename(self.outdir, theStream['filename'])
+            outfile = open(outpath, 'wb')
+            outfile.write(rebuiltFile)
+            outfile.close()
+
+        # remove the stream from the list of open streams
+        self.closed_streams.append((
+            key,
+            self.open_streams[key]['closed_connection']
+        ))
+        del(self.open_streams[key])
+
+
+
+"""Trivial File Transfer Protocol (TFTP)"""
+import re
+import logging
+
+from pypacker.pypacker import Packet
+from pypacker.structcbs import unpack_H
+
+logger = logging.getLogger("pypacker")
+
+PATTERN_00 = re.compile(b"\x00")
+split_nullbyte = PATTERN_00.split
+
+# Opcodes
+OP_RRQ = 1  # read request
+OP_WRQ = 2  # write request
+OP_DATA = 3  # data packet
+OP_ACK = 4  # acknowledgment
+OP_ERR = 5  # error code
+
+OPCODES_READ_WRITE = {OP_RRQ, OP_WRQ}
+OPCODES_DATA_ACK = {OP_DATA, OP_ACK}
+
+# Error codes
+EUNDEF = 0  # not defined
+ENOTFOUND = 1  # file not found
+EACCESS = 2  # access violation
+ENOSPACE = 3  # disk full or allocation exceeded
+EBADOP = 4  # illegal TFTP operation
+EBADID = 5  # unknown transfer ID
+EEXISTS = 6  # file already exists
+ENOUSER = 7  # no such user
+
+
+class TFTP(Packet):
+	__hdr__ = (
+		("opcode", "H", OP_RRQ),
+		("file", None, None),
+		("block", "H", 0),
+		("ttype", None, None)
+	)
+
+	def _dissect(self, buf):
+		hlen = 4
+		opcode = unpack_H(buf[: 2])
+		# logger.debug("opcode: %d" % opcode)
+
+		if opcode in OPCODES_DATA_ACK:
+			pass
+		elif opcode in OPCODES_READ_WRITE:
+			self.block = None
+			file, ttype = split_nullbyte(buf[2:], maxsplit=2)
+			# logger.debug("file/ttype = %r / %r" % (file, ttype))
+			self.file = file + b"\x00"
+			self.ttype = ttype + b"\x00"
+			hlen = 2 + len(file) + len(ttype)
+		elif opcode == OP_ERR:
+			pass
+		return hlen
+"""
+Extract interesting metadata from TLS connection setup
+"""
+
+
+##################################################################################################
+#
+# Reference RFC 2246 (TLS Protocol Version 1.0)
+#       and RFC 3546 (TLS Extensions)
+#
+# http://www.ietf.org/rfc/rfc2246.txt
+# http://www.ietf.org/rfc/rfc3546.txt
+# http://www.ietf.org/rfc/rfc3280.txt
+#
+##################################################################################################
+
+#####################
+# Custom Exceptions #
+#####################
+
+
+class Error(Exception):
+    pass
+
+
+class InsufficientData(Exception):
+    pass
+
+
+class UnsupportedOption(Exception):
+    pass
+
+####################################
+# Constants borrowed from dpkt.ssl #
+####################################
+
+
+# SSLv3/TLS version
+SSL3_VERSION = 0x0300
+TLS1_VERSION = 0x0301
+TLS1_2_VERSION = 0x0303
+
+# Record type
+SSL3_RT_CHANGE_CIPHER_SPEC = 20
+SSL3_RT_ALERT = 21
+SSL3_RT_HANDSHAKE = 22
+SSL3_RT_APPLICATION_DATA = 23
+
+# Handshake message type
+SSL3_MT_HELLO_REQUEST = 0
+SSL3_MT_CLIENT_HELLO = 1
+SSL3_MT_SERVER_HELLO = 2
+SSL3_MT_CERTIFICATE = 11
+SSL3_MT_SERVER_KEY_EXCHANGE = 12
+SSL3_MT_CERTIFICATE_REQUEST = 13
+SSL3_MT_SERVER_DONE = 14
+SSL3_MT_CERTIFICATE_VERIFY = 15
+SSL3_MT_CLIENT_KEY_EXCHANGE = 16
+SSL3_MT_FINISHED = 20
+
+# Cipher Suit Text Strings
+ciphersuit_text = {
+    0x0000: 'TLS_NULL_WITH_NULL_NULL',
+    0x0001: 'TLS_RSA_WITH_NULL_MD5',
+    0x0002: 'TLS_RSA_WITH_NULL_SHA',
+    0x0003: 'TLS_RSA_EXPORT_WITH_RC4_40_MD5',
+    0x0004: 'TLS_RSA_WITH_RC4_128_MD5',
+    0x0005: 'TLS_RSA_WITH_RC4_128_SHA',
+    0x0006: 'TLS_RSA_EXPORT_WITH_RC2_CBC_40_MD5',
+    0x0007: 'TLS_RSA_WITH_IDEA_CBC_SHA',
+    0x0008: 'TLS_RSA_EXPORT_WITH_DES40_CBC_SHA',
+    0x0009: 'TLS_RSA_WITH_DES_CBC_SHA',
+    0x000A: 'TLS_RSA_WITH_3DES_EDE_CBC_SHA',
+    0x000B: 'TLS_DH_DSS_EXPORT_WITH_DES40_CBC_SHA',
+    0x000C: 'TLS_DH_DSS_WITH_DES_CBC_SHA',
+    0x000D: 'TLS_DH_DSS_WITH_3DES_EDE_CBC_SHA',
+    0x000E: 'TLS_DH_RSA_EXPORT_WITH_DES40_CBC_SHA',
+    0x000F: 'TLS_DH_RSA_WITH_DES_CBC_SHA',
+    0x0010: 'TLS_DH_RSA_WITH_3DES_EDE_CBC_SHA',
+    0x0011: 'TLS_DHE_DSS_EXPORT_WITH_DES40_CBC_SHA',
+    0x0012: 'TLS_DHE_DSS_WITH_DES_CBC_SHA',
+    0x0013: 'TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA',
+    0x0014: 'TLS_DHE_RSA_EXPORT_WITH_DES40_CBC_SHA',
+    0x0015: 'TLS_DHE_RSA_WITH_DES_CBC_SHA',
+    0x0016: 'TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA',
+    0x0017: 'TLS_DH_anon_EXPORT_WITH_RC4_40_MD5',
+    0x0018: 'TLS_DH_anon_WITH_RC4_128_MD5',
+    0x0019: 'TLS_DH_anon_EXPORT_WITH_DES40_CBC_SHA',
+    0x001A: 'TLS_DH_anon_WITH_DES_CBC_SHA',
+    0x001B: 'TLS_DH_anon_WITH_3DES_EDE_CBC_SHA',
+    0x001E: 'TLS_KRB5_WITH_DES_CBC_SHA',
+    0x001F: 'TLS_KRB5_WITH_3DES_EDE_CBC_SHA',
+    0x0020: 'TLS_KRB5_WITH_RC4_128_SHA',
+    0x0021: 'TLS_KRB5_WITH_IDEA_CBC_SHA',
+    0x0022: 'TLS_KRB5_WITH_DES_CBC_MD5',
+    0x0023: 'TLS_KRB5_WITH_3DES_EDE_CBC_MD5',
+    0x0024: 'TLS_KRB5_WITH_RC4_128_MD5',
+    0x0025: 'TLS_KRB5_WITH_IDEA_CBC_MD5',
+    0x0026: 'TLS_KRB5_EXPORT_WITH_DES_CBC_40_SHA',
+    0x0027: 'TLS_KRB5_EXPORT_WITH_RC2_CBC_40_SHA',
+    0x0028: 'TLS_KRB5_EXPORT_WITH_RC4_40_SHA',
+    0x0029: 'TLS_KRB5_EXPORT_WITH_DES_CBC_40_MD5',
+    0x002A: 'TLS_KRB5_EXPORT_WITH_RC2_CBC_40_MD5',
+    0x002B: 'TLS_KRB5_EXPORT_WITH_RC4_40_MD5',
+    0x002C: 'TLS_PSK_WITH_NULL_SHA',
+    0x002D: 'TLS_DHE_PSK_WITH_NULL_SHA',
+    0x002E: 'TLS_RSA_PSK_WITH_NULL_SHA',
+    0x002F: 'TLS_RSA_WITH_AES_128_CBC_SHA',
+    0x0030: 'TLS_DH_DSS_WITH_AES_128_CBC_SHA',
+    0x0031: 'TLS_DH_RSA_WITH_AES_128_CBC_SHA',
+    0x0032: 'TLS_DHE_DSS_WITH_AES_128_CBC_SHA',
+    0x0033: 'TLS_DHE_RSA_WITH_AES_128_CBC_SHA',
+    0x0034: 'TLS_DH_anon_WITH_AES_128_CBC_SHA',
+    0x0035: 'TLS_RSA_WITH_AES_256_CBC_SHA',
+    0x0036: 'TLS_DH_DSS_WITH_AES_256_CBC_SHA',
+    0x0037: 'TLS_DH_RSA_WITH_AES_256_CBC_SHA',
+    0x0038: 'TLS_DHE_DSS_WITH_AES_256_CBC_SHA',
+    0x0039: 'TLS_DHE_RSA_WITH_AES_256_CBC_SHA',
+    0x003A: 'TLS_DH_anon_WITH_AES_256_CBC_SHA',
+    0x003B: 'TLS_RSA_WITH_NULL_SHA256',
+    0x003C: 'TLS_RSA_WITH_AES_128_CBC_SHA256',
+    0x003D: 'TLS_RSA_WITH_AES_256_CBC_SHA256',
+    0x003E: 'TLS_DH_DSS_WITH_AES_128_CBC_SHA256',
+    0x003F: 'TLS_DH_RSA_WITH_AES_128_CBC_SHA256',
+    0x0040: 'TLS_DHE_DSS_WITH_AES_128_CBC_SHA256',
+    0x0041: 'TLS_RSA_WITH_CAMELLIA_128_CBC_SHA',
+    0x0042: 'TLS_DH_DSS_WITH_CAMELLIA_128_CBC_SHA',
+    0x0043: 'TLS_DH_RSA_WITH_CAMELLIA_128_CBC_SHA',
+    0x0044: 'TLS_DHE_DSS_WITH_CAMELLIA_128_CBC_SHA',
+    0x0045: 'TLS_DHE_RSA_WITH_CAMELLIA_128_CBC_SHA',
+    0x0046: 'TLS_DH_anon_WITH_CAMELLIA_128_CBC_SHA',
+    0x0067: 'TLS_DHE_RSA_WITH_AES_128_CBC_SHA256',
+    0x0068: 'TLS_DH_DSS_WITH_AES_256_CBC_SHA256',
+    0x0069: 'TLS_DH_RSA_WITH_AES_256_CBC_SHA256',
+    0x006A: 'TLS_DHE_DSS_WITH_AES_256_CBC_SHA256',
+    0x006B: 'TLS_DHE_RSA_WITH_AES_256_CBC_SHA256',
+    0x006C: 'TLS_DH_anon_WITH_AES_128_CBC_SHA256',
+    0x006D: 'TLS_DH_anon_WITH_AES_256_CBC_SHA256',
+    0x0084: 'TLS_RSA_WITH_CAMELLIA_256_CBC_SHA',
+    0x0085: 'TLS_DH_DSS_WITH_CAMELLIA_256_CBC_SHA',
+    0x0086: 'TLS_DH_RSA_WITH_CAMELLIA_256_CBC_SHA',
+    0x0087: 'TLS_DHE_DSS_WITH_CAMELLIA_256_CBC_SHA',
+    0x0088: 'TLS_DHE_RSA_WITH_CAMELLIA_256_CBC_SHA',
+    0x0089: 'TLS_DH_anon_WITH_CAMELLIA_256_CBC_SHA',
+    0x008A: 'TLS_PSK_WITH_RC4_128_SHA',
+    0x008B: 'TLS_PSK_WITH_3DES_EDE_CBC_SHA',
+    0x008C: 'TLS_PSK_WITH_AES_128_CBC_SHA',
+    0x008D: 'TLS_PSK_WITH_AES_256_CBC_SHA',
+    0x008E: 'TLS_DHE_PSK_WITH_RC4_128_SHA',
+    0x008F: 'TLS_DHE_PSK_WITH_3DES_EDE_CBC_SHA',
+    0x0090: 'TLS_DHE_PSK_WITH_AES_128_CBC_SHA',
+    0x0091: 'TLS_DHE_PSK_WITH_AES_256_CBC_SHA',
+    0x0092: 'TLS_RSA_PSK_WITH_RC4_128_SHA',
+    0x0093: 'TLS_RSA_PSK_WITH_3DES_EDE_CBC_SHA',
+    0x0094: 'TLS_RSA_PSK_WITH_AES_128_CBC_SHA',
+    0x0095: 'TLS_RSA_PSK_WITH_AES_256_CBC_SHA',
+    0x0096: 'TLS_RSA_WITH_SEED_CBC_SHA',
+    0x0097: 'TLS_DH_DSS_WITH_SEED_CBC_SHA',
+    0x0098: 'TLS_DH_RSA_WITH_SEED_CBC_SHA',
+    0x0099: 'TLS_DHE_DSS_WITH_SEED_CBC_SHA',
+    0x009A: 'TLS_DHE_RSA_WITH_SEED_CBC_SHA',
+    0x009B: 'TLS_DH_anon_WITH_SEED_CBC_SHA',
+    0x009C: 'TLS_RSA_WITH_AES_128_GCM_SHA256',
+    0x009D: 'TLS_RSA_WITH_AES_256_GCM_SHA384',
+    0x009E: 'TLS_DHE_RSA_WITH_AES_128_GCM_SHA256',
+    0x009F: 'TLS_DHE_RSA_WITH_AES_256_GCM_SHA384',
+    0x00A0: 'TLS_DH_RSA_WITH_AES_128_GCM_SHA256',
+    0x00A1: 'TLS_DH_RSA_WITH_AES_256_GCM_SHA384',
+    0x00A2: 'TLS_DHE_DSS_WITH_AES_128_GCM_SHA256',
+    0x00A3: 'TLS_DHE_DSS_WITH_AES_256_GCM_SHA384',
+    0x00A4: 'TLS_DH_DSS_WITH_AES_128_GCM_SHA256',
+    0x00A5: 'TLS_DH_DSS_WITH_AES_256_GCM_SHA384',
+    0x00A6: 'TLS_DH_anon_WITH_AES_128_GCM_SHA256',
+    0x00A7: 'TLS_DH_anon_WITH_AES_256_GCM_SHA384',
+    0x00A8: 'TLS_PSK_WITH_AES_128_GCM_SHA256',
+    0x00A9: 'TLS_PSK_WITH_AES_256_GCM_SHA384',
+    0x00AA: 'TLS_DHE_PSK_WITH_AES_128_GCM_SHA256',
+    0x00AB: 'TLS_DHE_PSK_WITH_AES_256_GCM_SHA384',
+    0x00AC: 'TLS_RSA_PSK_WITH_AES_128_GCM_SHA256',
+    0x00AD: 'TLS_RSA_PSK_WITH_AES_256_GCM_SHA384',
+    0x00AE: 'TLS_PSK_WITH_AES_128_CBC_SHA256',
+    0x00AF: 'TLS_PSK_WITH_AES_256_CBC_SHA384',
+    0x00B0: 'TLS_PSK_WITH_NULL_SHA256',
+    0x00B1: 'TLS_PSK_WITH_NULL_SHA384',
+    0x00B2: 'TLS_DHE_PSK_WITH_AES_128_CBC_SHA256',
+    0x00B3: 'TLS_DHE_PSK_WITH_AES_256_CBC_SHA384',
+    0x00B4: 'TLS_DHE_PSK_WITH_NULL_SHA256',
+    0x00B5: 'TLS_DHE_PSK_WITH_NULL_SHA384',
+    0x00B6: 'TLS_RSA_PSK_WITH_AES_128_CBC_SHA256',
+    0x00B7: 'TLS_RSA_PSK_WITH_AES_256_CBC_SHA384',
+    0x00B8: 'TLS_RSA_PSK_WITH_NULL_SHA256',
+    0x00B9: 'TLS_RSA_PSK_WITH_NULL_SHA384',
+    0x00BA: 'TLS_RSA_WITH_CAMELLIA_128_CBC_SHA256',
+    0x00BB: 'TLS_DH_DSS_WITH_CAMELLIA_128_CBC_SHA256',
+    0x00BC: 'TLS_DH_RSA_WITH_CAMELLIA_128_CBC_SHA256',
+    0x00BD: 'TLS_DHE_DSS_WITH_CAMELLIA_128_CBC_SHA256',
+    0x00BE: 'TLS_DHE_RSA_WITH_CAMELLIA_128_CBC_SHA256',
+    0x00BF: 'TLS_DH_anon_WITH_CAMELLIA_128_CBC_SHA256',
+    0x00C0: 'TLS_RSA_WITH_CAMELLIA_256_CBC_SHA256',
+    0x00C1: 'TLS_DH_DSS_WITH_CAMELLIA_256_CBC_SHA256',
+    0x00C2: 'TLS_DH_RSA_WITH_CAMELLIA_256_CBC_SHA256',
+    0x00C3: 'TLS_DHE_DSS_WITH_CAMELLIA_256_CBC_SHA256',
+    0x00C4: 'TLS_DHE_RSA_WITH_CAMELLIA_256_CBC_SHA256',
+    0x00C5: 'TLS_DH_anon_WITH_CAMELLIA_256_CBC_SHA256',
+    0x00FF: 'TLS_EMPTY_RENEGOTIATION_INFO_SCSV',
+    0xC001: 'TLS_ECDH_ECDSA_WITH_NULL_SHA',
+    0xC002: 'TLS_ECDH_ECDSA_WITH_RC4_128_SHA',
+    0xC003: 'TLS_ECDH_ECDSA_WITH_3DES_EDE_CBC_SHA',
+    0xC004: 'TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA',
+    0xC005: 'TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA',
+    0xC006: 'TLS_ECDHE_ECDSA_WITH_NULL_SHA',
+    0xC007: 'TLS_ECDHE_ECDSA_WITH_RC4_128_SHA',
+    0xC008: 'TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA',
+    0xC009: 'TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA',
+    0xC00A: 'TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA',
+    0xC00B: 'TLS_ECDH_RSA_WITH_NULL_SHA',
+    0xC00C: 'TLS_ECDH_RSA_WITH_RC4_128_SHA',
+    0xC00D: 'TLS_ECDH_RSA_WITH_3DES_EDE_CBC_SHA',
+    0xC00E: 'TLS_ECDH_RSA_WITH_AES_128_CBC_SHA',
+    0xC00F: 'TLS_ECDH_RSA_WITH_AES_256_CBC_SHA',
+    0xC010: 'TLS_ECDHE_RSA_WITH_NULL_SHA',
+    0xC011: 'TLS_ECDHE_RSA_WITH_RC4_128_SHA',
+    0xC012: 'TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA',
+    0xC013: 'TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA',
+    0xC014: 'TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA',
+    0xC015: 'TLS_ECDH_anon_WITH_NULL_SHA',
+    0xC016: 'TLS_ECDH_anon_WITH_RC4_128_SHA',
+    0xC017: 'TLS_ECDH_anon_WITH_3DES_EDE_CBC_SHA',
+    0xC018: 'TLS_ECDH_anon_WITH_AES_128_CBC_SHA',
+    0xC019: 'TLS_ECDH_anon_WITH_AES_256_CBC_SHA',
+    0xC01A: 'TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA',
+    0xC01B: 'TLS_SRP_SHA_RSA_WITH_3DES_EDE_CBC_SHA',
+    0xC01C: 'TLS_SRP_SHA_DSS_WITH_3DES_EDE_CBC_SHA',
+    0xC01D: 'TLS_SRP_SHA_WITH_AES_128_CBC_SHA',
+    0xC01E: 'TLS_SRP_SHA_RSA_WITH_AES_128_CBC_SHA',
+    0xC01F: 'TLS_SRP_SHA_DSS_WITH_AES_128_CBC_SHA',
+    0xC020: 'TLS_SRP_SHA_WITH_AES_256_CBC_SHA',
+    0xC021: 'TLS_SRP_SHA_RSA_WITH_AES_256_CBC_SHA',
+    0xC022: 'TLS_SRP_SHA_DSS_WITH_AES_256_CBC_SHA',
+    0xC023: 'TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256',
+    0xC024: 'TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384',
+    0xC025: 'TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA256',
+    0xC026: 'TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA384',
+    0xC027: 'TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256',
+    0xC028: 'TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384',
+    0xC029: 'TLS_ECDH_RSA_WITH_AES_128_CBC_SHA256',
+    0xC02A: 'TLS_ECDH_RSA_WITH_AES_256_CBC_SHA384',
+    0xC02B: 'TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256',
+    0xC02C: 'TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384',
+    0xC02D: 'TLS_ECDH_ECDSA_WITH_AES_128_GCM_SHA256',
+    0xC02E: 'TLS_ECDH_ECDSA_WITH_AES_256_GCM_SHA384',
+    0xC02F: 'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256',
+    0xC030: 'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384',
+    0xC031: 'TLS_ECDH_RSA_WITH_AES_128_GCM_SHA256',
+    0xC032: 'TLS_ECDH_RSA_WITH_AES_256_GCM_SHA384',
+    0xC033: 'TLS_ECDHE_PSK_WITH_RC4_128_SHA',
+    0xC034: 'TLS_ECDHE_PSK_WITH_3DES_EDE_CBC_SHA',
+    0xC035: 'TLS_ECDHE_PSK_WITH_AES_128_CBC_SHA',
+    0xC036: 'TLS_ECDHE_PSK_WITH_AES_256_CBC_SHA',
+    0xC037: 'TLS_ECDHE_PSK_WITH_AES_128_CBC_SHA256',
+    0xC038: 'TLS_ECDHE_PSK_WITH_AES_256_CBC_SHA384',
+    0xC039: 'TLS_ECDHE_PSK_WITH_NULL_SHA',
+    0xC03A: 'TLS_ECDHE_PSK_WITH_NULL_SHA256',
+    0xC03B: 'TLS_ECDHE_PSK_WITH_NULL_SHA384',
+    0xC03C: 'TLS_RSA_WITH_ARIA_128_CBC_SHA256',
+    0xC03D: 'TLS_RSA_WITH_ARIA_256_CBC_SHA384',
+    0xC03E: 'TLS_DH_DSS_WITH_ARIA_128_CBC_SHA256',
+    0xC03F: 'TLS_DH_DSS_WITH_ARIA_256_CBC_SHA384',
+    0xC040: 'TLS_DH_RSA_WITH_ARIA_128_CBC_SHA256',
+    0xC041: 'TLS_DH_RSA_WITH_ARIA_256_CBC_SHA384',
+    0xC042: 'TLS_DHE_DSS_WITH_ARIA_128_CBC_SHA256',
+    0xC043: 'TLS_DHE_DSS_WITH_ARIA_256_CBC_SHA384',
+    0xC044: 'TLS_DHE_RSA_WITH_ARIA_128_CBC_SHA256',
+    0xC045: 'TLS_DHE_RSA_WITH_ARIA_256_CBC_SHA384',
+    0xC046: 'TLS_DH_anon_WITH_ARIA_128_CBC_SHA256',
+    0xC047: 'TLS_DH_anon_WITH_ARIA_256_CBC_SHA384',
+    0xC048: 'TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256',
+    0xC049: 'TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384',
+    0xC04A: 'TLS_ECDH_ECDSA_WITH_ARIA_128_CBC_SHA256',
+    0xC04B: 'TLS_ECDH_ECDSA_WITH_ARIA_256_CBC_SHA384',
+    0xC04C: 'TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256',
+    0xC04D: 'TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384',
+    0xC04E: 'TLS_ECDH_RSA_WITH_ARIA_128_CBC_SHA256',
+    0xC04F: 'TLS_ECDH_RSA_WITH_ARIA_256_CBC_SHA384',
+    0xC050: 'TLS_RSA_WITH_ARIA_128_GCM_SHA256',
+    0xC051: 'TLS_RSA_WITH_ARIA_256_GCM_SHA384',
+    0xC052: 'TLS_DHE_RSA_WITH_ARIA_128_GCM_SHA256',
+    0xC053: 'TLS_DHE_RSA_WITH_ARIA_256_GCM_SHA384',
+    0xC054: 'TLS_DH_RSA_WITH_ARIA_128_GCM_SHA256',
+    0xC055: 'TLS_DH_RSA_WITH_ARIA_256_GCM_SHA384',
+    0xC056: 'TLS_DHE_DSS_WITH_ARIA_128_GCM_SHA256',
+    0xC057: 'TLS_DHE_DSS_WITH_ARIA_256_GCM_SHA384',
+    0xC058: 'TLS_DH_DSS_WITH_ARIA_128_GCM_SHA256',
+    0xC059: 'TLS_DH_DSS_WITH_ARIA_256_GCM_SHA384',
+    0xC05A: 'TLS_DH_anon_WITH_ARIA_128_GCM_SHA256',
+    0xC05B: 'TLS_DH_anon_WITH_ARIA_256_GCM_SHA384',
+    0xC05C: 'TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256',
+    0xC05D: 'TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384',
+    0xC05E: 'TLS_ECDH_ECDSA_WITH_ARIA_128_GCM_SHA256',
+    0xC05F: 'TLS_ECDH_ECDSA_WITH_ARIA_256_GCM_SHA384',
+    0xC060: 'TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256',
+    0xC061: 'TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384',
+    0xC062: 'TLS_ECDH_RSA_WITH_ARIA_128_GCM_SHA256',
+    0xC063: 'TLS_ECDH_RSA_WITH_ARIA_256_GCM_SHA384',
+    0xC064: 'TLS_PSK_WITH_ARIA_128_CBC_SHA256',
+    0xC065: 'TLS_PSK_WITH_ARIA_256_CBC_SHA384',
+    0xC066: 'TLS_DHE_PSK_WITH_ARIA_128_CBC_SHA256',
+    0xC067: 'TLS_DHE_PSK_WITH_ARIA_256_CBC_SHA384',
+    0xC068: 'TLS_RSA_PSK_WITH_ARIA_128_CBC_SHA256',
+    0xC069: 'TLS_RSA_PSK_WITH_ARIA_256_CBC_SHA384',
+    0xC06A: 'TLS_PSK_WITH_ARIA_128_GCM_SHA256',
+    0xC06B: 'TLS_PSK_WITH_ARIA_256_GCM_SHA384',
+    0xC06C: 'TLS_DHE_PSK_WITH_ARIA_128_GCM_SHA256',
+    0xC06D: 'TLS_DHE_PSK_WITH_ARIA_256_GCM_SHA384',
+    0xC06E: 'TLS_RSA_PSK_WITH_ARIA_128_GCM_SHA256',
+    0xC06F: 'TLS_RSA_PSK_WITH_ARIA_256_GCM_SHA384',
+    0xC070: 'TLS_ECDHE_PSK_WITH_ARIA_128_CBC_SHA256',
+    0xC071: 'TLS_ECDHE_PSK_WITH_ARIA_256_CBC_SHA384',
+    0xC072: 'TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256',
+    0xC073: 'TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384',
+    0xC074: 'TLS_ECDH_ECDSA_WITH_CAMELLIA_128_CBC_SHA256',
+    0xC075: 'TLS_ECDH_ECDSA_WITH_CAMELLIA_256_CBC_SHA384',
+    0xC076: 'TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256',
+    0xC077: 'TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384',
+    0xC078: 'TLS_ECDH_RSA_WITH_CAMELLIA_128_CBC_SHA256',
+    0xC079: 'TLS_ECDH_RSA_WITH_CAMELLIA_256_CBC_SHA384',
+    0xC07A: 'TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC07B: 'TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC07C: 'TLS_DHE_RSA_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC07D: 'TLS_DHE_RSA_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC07E: 'TLS_DH_RSA_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC07F: 'TLS_DH_RSA_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC080: 'TLS_DHE_DSS_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC081: 'TLS_DHE_DSS_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC082: 'TLS_DH_DSS_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC083: 'TLS_DH_DSS_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC084: 'TLS_DH_anon_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC085: 'TLS_DH_anon_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC086: 'TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC087: 'TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC088: 'TLS_ECDH_ECDSA_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC089: 'TLS_ECDH_ECDSA_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC08A: 'TLS_ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC08B: 'TLS_ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC08C: 'TLS_ECDH_RSA_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC08D: 'TLS_ECDH_RSA_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC08E: 'TLS_PSK_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC08F: 'TLS_PSK_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC090: 'TLS_DHE_PSK_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC091: 'TLS_DHE_PSK_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC092: 'TLS_RSA_PSK_WITH_CAMELLIA_128_GCM_SHA256',
+    0xC093: 'TLS_RSA_PSK_WITH_CAMELLIA_256_GCM_SHA384',
+    0xC094: 'TLS_PSK_WITH_CAMELLIA_128_CBC_SHA256',
+    0xC095: 'TLS_PSK_WITH_CAMELLIA_256_CBC_SHA384',
+    0xC096: 'TLS_DHE_PSK_WITH_CAMELLIA_128_CBC_SHA256',
+    0xC097: 'TLS_DHE_PSK_WITH_CAMELLIA_256_CBC_SHA384',
+    0xC098: 'TLS_RSA_PSK_WITH_CAMELLIA_128_CBC_SHA256',
+    0xC099: 'TLS_RSA_PSK_WITH_CAMELLIA_256_CBC_SHA384',
+    0xC09A: 'TLS_ECDHE_PSK_WITH_CAMELLIA_128_CBC_SHA256',
+    0xC09B: 'TLS_ECDHE_PSK_WITH_CAMELLIA_256_CBC_SHA384',
+    0xC09C: 'TLS_RSA_WITH_AES_128_CCM',
+    0xC09D: 'TLS_RSA_WITH_AES_256_CCM',
+    0xC09E: 'TLS_DHE_RSA_WITH_AES_128_CCM',
+    0xC09F: 'TLS_DHE_RSA_WITH_AES_256_CCM',
+    0xC0A0: 'TLS_RSA_WITH_AES_128_CCM_8',
+    0xC0A1: 'TLS_RSA_WITH_AES_256_CCM_8',
+    0xC0A2: 'TLS_DHE_RSA_WITH_AES_128_CCM_8',
+    0xC0A3: 'TLS_DHE_RSA_WITH_AES_256_CCM_8',
+    0xC0A4: 'TLS_PSK_WITH_AES_128_CCM',
+    0xC0A5: 'TLS_PSK_WITH_AES_256_CCM',
+    0xC0A6: 'TLS_DHE_PSK_WITH_AES_128_CCM',
+    0xC0A7: 'TLS_DHE_PSK_WITH_AES_256_CCM',
+    0xC0A8: 'TLS_PSK_WITH_AES_128_CCM_8',
+    0xC0A9: 'TLS_PSK_WITH_AES_256_CCM_8',
+    0xC0AA: 'TLS_PSK_DHE_WITH_AES_128_CCM_8',
+    0xC0AB: 'TLS_PSK_DHE_WITH_AES_256_CCM_8',
+}
+
+keytypes = {
+    OpenSSL.crypto.TYPE_RSA: 'RSA',
+    OpenSSL.crypto.TYPE_DSA: 'DSA',
+}
+
+
+#####################################################################
+# TLS - TLS message object, initialized from TCP segment
+#
+#   Status:  Currently only supports TLS 1.0 Handshake messages
+#
+#####################################################################
+class TLS(object):
+
+    def __init__(self, data):
+
+        data_length = len(data)
+        offset = 0
+
+        #########################
+        # Unpack TLSPlaintext   #
+        #########################
+        if data_length >= offset+5:
+            (self.ContentType, self.ProtocolVersion, self.TLSRecordLength) = struct.unpack(
+                '!BHH', data[offset:offset+5])
+            offset += 5
+        else:
+            raise InsufficientData('%d bytes received by TLS' % data_length)
+
+        #
+        # For now, only interested in TLS 1.0.
+        # Reason: SSL2.0 records do not support the server_name extension, which is the primary
+        #         motivation for creating this library.  Needs to be updated/extended eventually.
+        #
+        if self.ProtocolVersion != TLS1_VERSION and self.ProtocolVersion != SSL3_VERSION and self.ProtocolVersion != TLS1_2_VERSION:
+            raise UnsupportedOption(
+                'Protocol version 0x%x not supported' % self.ProtocolVersion)
+
+        #################
+        # Check Size    #
+        #################
+        self.recordbytes = self.TLSRecordLength + 5
+        if data_length < self.recordbytes:
+            raise InsufficientData('%d bytes received by TLS' % data_length)
+
+        #########################################################################
+        # Content Types - Only Handshake supported for now
+        #########################################################################
+        self.Handshakes = []
+        if self.ContentType == SSL3_RT_HANDSHAKE:
+
+            ###############################
+            # Loop Through Handshakes     #
+            ###############################
+            while self.recordbytes >= offset + 4:  # Need minimum four bytes for the rest to contain another Handshake
+
+                HandshakeType = data[offset]
+                offset += 1
+
+                #
+                # Handshake Record length
+                #
+                HandshakeLength = struct.unpack(
+                    '!I', b'\x00' + data[offset:offset+3])[0]
+                offset += 3
+
+                #
+                # Parse Handshake SubType
+                #
+                if HandshakeType == SSL3_MT_CLIENT_HELLO:
+                    try:
+                        self.Handshakes.append(TLSClientHello(
+                            HandshakeType, HandshakeLength, data[offset:offset+HandshakeLength]))
+                    except:
+                        raise
+                elif HandshakeType == SSL3_MT_SERVER_HELLO:
+                    try:
+                        self.Handshakes.append(TLSServerHello(
+                            HandshakeType, HandshakeLength, data[offset:offset+HandshakeLength]))
+                    except:
+                        raise
+                elif HandshakeType == SSL3_MT_CERTIFICATE:
+                    try:
+                        self.Handshakes.append(TLSCertificate(
+                            HandshakeType, HandshakeLength, data[offset:offset+HandshakeLength]))
+                    except:
+                        raise
+
+                offset += HandshakeLength
+            ###############################
+            # End Handshakes Loop         #
+            ###############################
+
+
+#####################################################################
+# TLSHandshake
+#####################################################################
+class TLSHandshake(object):
+
+    def __init__(self, HandshakeType, HandshakeLength):
+        self.HandshakeType = HandshakeType
+        self.HandshakeLength = HandshakeLength
+
+#####################################################################
+# TLSCertificate - Certificate Handshake type
+#####################################################################
+
+
+class TLSCertificate(TLSHandshake):
+
+    def __init__(self, HandshakeType, HandshakeLength, data):
+
+        TLSHandshake.__init__(self, HandshakeType, HandshakeLength)
+        data_length = len(data)
+        offset = 0
+
+        # length of all certificates
+        if data_length >= offset+3:
+            certificates_length = struct.unpack(
+                '!I', b'\x00' + data[offset:offset+3])[0]
+            offset += 3
+        else:
+            raise InsufficientData(
+                '%d bytes received by TLSCertificate, expected %d for client_version' % (data_length, offset + 2))
+
+        if data_length >= offset + certificates_length:
+            try:
+                self.Certificates = self.__parse_certs(
+                    data[offset:offset+certificates_length])
+                offset += certificates_length
+            except:
+                offset += certificates_length
+                raise
+        else:
+            raise InsufficientData('%d bytes received by TLSCertificate, expected %d for client_version' % (
+                data_length, offset + certificates_length))
+
+    # Returns array of x509 objects (defined below)
+    def __parse_certs(self, data):
+
+        certs = []
+        while data:
+            try:
+                clen, data = self.l24(data)
+                if len(data) < clen:
+                    raise InsufficientData(
+                        '%d bytes in buffer, need %d' % (len(data), clen))
+                try:
+                    cert = OpenSSL.crypto.load_certificate(
+                        OpenSSL.crypto.FILETYPE_ASN1, data[:clen])
+                except:
+                    return certs
+                certs.append(cert)
+                data = data[clen:]
+            except:
+                raise
+        return certs
+
+    def l24(self, data):
+        '''24-bit length decoder'''
+        (lh, ll), data = struct.unpack('!BH', data[0:3]), data[3:]
+        return lh << 16 | ll, data
+
+
+#####################################################################
+# TLSClientHello - ClientHello Handshake type
+#####################################################################
+class TLSClientHello(TLSHandshake):
+
+    def __init__(self, HandshakeType, HandshakeLength, data):
+        TLSHandshake.__init__(self, HandshakeType, HandshakeLength)
+        data_length = len(data)
+        offset = 0
+        self.ja3_data = []
+
+        # self.client_version
+        if data_length >= offset+2:
+            self.client_version = struct.unpack('!H', data[offset:offset+2])[0]
+            if ja3_available:
+                self.ja3_data.append(self.client_version)
+            offset += 2
+        else:
+            raise InsufficientData(
+                '%d bytes received by TLSClientHello, expected %d for client_version' % (data_length, offset + 2))
+
+        # self.random
+        if data_length >= offset+32:
+            self.random = data[offset:offset+32]
+            offset += 32
+        else:
+            raise InsufficientData('%d bytes received by TLSClientHello, expected %d for random block' % (
+                data_length, offset + 32))
+
+        # self.session_id_length
+        if data_length >= offset+1:
+            self.session_id_length = struct.unpack(
+                '!B', data[offset:offset+1])[0]
+            offset += 1
+        else:
+            raise InsufficientData(
+                '%d bytes received by TLSClientHello, expected %d for session_id_length' % (data_length, offset + 1))
+
+        # self.session_id
+        if self.session_id_length > 0:
+            if data_length >= offset+self.session_id_length:
+                self.session_id = data[offset:offset+self.session_id_length]
+                offset += self.session_id_length
+            else:
+                raise InsufficientData('%d bytes received by TLSClientHello, expected %d for session_id' % (
+                    data_length, offset + self.session_id_length))
+        else:
+            self.session_id = None
+
+        # self.cipher_suites_length
+        if data_length >= offset+2:
+            self.cipher_suites_length = struct.unpack(
+                '!H', data[offset:offset+2])[0]
+            offset += 2
+        else:
+            raise InsufficientData(
+                '%d bytes received by TLSClientHello, expected %d for cipher_suites_length' % (data_length, offset + 2))
+
+        # self.cipher_suites (array, two bytes each)
+        self.cipher_suites = []
+        if self.cipher_suites_length > 0:
+            if ja3_available:
+                self.ja3_data.append(ja3.ja3.convert_to_ja3_segment(
+                    data[offset:offset+self.cipher_suites_length], 2))
+            if data_length >= offset + self.cipher_suites_length:
+                for j in range(0, self.cipher_suites_length, 2):
+                    self.cipher_suites.append(data[offset+j:offset+j+2])
+                offset += self.cipher_suites_length
+            else:
+                raise InsufficientData('%d bytes received by TLSClientHello, expected %d for cipher_suites' % (
+                    data_length, offset + self.cipher_suites_length))
+
+        # self.compression_methods_length
+        if data_length >= offset+1:
+            self.compression_methods_length = data[offset]
+            offset += 1
+        else:
+            raise InsufficientData(
+                '%d bytes received by TLSClientHello, expected %d for compression_methods_length' % (data_length, offset + 1))
+
+        # self.compression_methods (array, one bytes each)
+        self.compression_methods = []
+        if self.compression_methods_length > 0:
+            if data_length >= offset + self.compression_methods_length:
+                for j in range(0, self.compression_methods_length):
+                    self.compression_methods.append(data[offset+j])
+                offset += self.compression_methods_length
+            else:
+                raise InsufficientData('%d bytes received by TLSClientHello, expected %d for compression_methods' % (
+                    data_length, offset + self.compression_methods_length))
+
+        ################################
+        # Slice Off the Extensions
+        ################################
+        if ja3_available:
+            self.ja3_data.extend(ja3.ja3.process_extensions(
+                ja3.ja3.dpkt.ssl.TLSClientHello(data)))
+        self.extensions = {}
+        self.raw_extensions = []  # ordered list of tuples (ex_type, ex_data)
+        # self.extensions_length
+        if data_length >= offset+2:
+            self.extensions_length = struct.unpack(
+                '!H', data[offset:offset+2])[0]
+            offset += 2
+        else:
+            # No extensions
+            return
+
+        # Copy Extension Blob into a new working variable
+        try:
+            extensions_data = data[offset:offset+self.extensions_length]
+        except:
+            raise InsufficientData('%d bytes received by TLSClientHello, expected %d for extensions' % (
+                data_length, offset + self.extensions_length))
+
+        ###########################
+        # Iterate the Extensions
+        ###########################
+        extension_server_name_list = []
+        while len(extensions_data) >= 4:
+
+            (ex_type, length) = struct.unpack('!HH', extensions_data[:4])
+            if len(extensions_data) > length+4:
+                this_extension_data = extensions_data[4:4+length]
+                extensions_data = extensions_data[4+length:]
+            else:
+                this_extension_data = extensions_data[4:]
+                extensions_data = ''
+
+            self.raw_extensions.append((ex_type, this_extension_data))
+
+            # server_name extension
+            # this_extension_data is defined on page 8 of RFC 3546
+            # It is essentially a list of hostnames
+            if ex_type == 0:
+                server_name_list_length = struct.unpack(
+                    '!H', this_extension_data[:2])[0]
+                if server_name_list_length > len(this_extension_data) - 2:
+                    raise Error("Malformed ServerNameList")
+                server_name_list = this_extension_data[2:]
+                # Iterate the list
+                while len(server_name_list) > 0:
+                    (name_type, name_length) = struct.unpack(
+                        '!BH', server_name_list[0:3])
+                    name_data = server_name_list[3:name_length + 3]
+                    if len(server_name_list) > name_length + 3:
+                        server_name_list = server_name_list[name_length + 3:]
+                    else:
+                        server_name_list = ''
+                    if name_type == 0:
+                        extension_server_name_list.append(name_data)
+                    else:
+                        raise UnsupportedOption("Unknown NameType")
+        # After Loop
+        # add extension information to dictionary
+        self.extensions['server_name'] = extension_server_name_list
+
+    def ja3(self):
+        if ja3_available:
+            return ','.join([str(x) for x in self.ja3_data])
+        else:
+            return None
+
+    def ja3_digest(self):
+        if ja3_available:
+            h = hashlib.md5(self.ja3().encode('utf-8'))
+            return h.hexdigest()
+        else:
+            return None
+
+
+#####################################################################
+# TLSServerHello - ServerHello Handshake type
+#####################################################################
+class TLSServerHello(TLSHandshake):
+
+    def __init__(self, HandshakeType, HandshakeLength, data):
+        TLSHandshake.__init__(self, HandshakeType, HandshakeLength)
+        data_length = len(data)
+        offset = 0
+
+        # self.server_version
+        if data_length >= offset+2:
+            self.server_version = struct.unpack('!H', data[offset:offset+2])[0]
+            offset += 2
+        else:
+            raise InsufficientData(
+                '%d bytes received by TLSServerHello, expected %d for server_version' % (data_length, offset + 2))
+
+        # self.random
+        if data_length >= offset+32:
+            self.random = data[offset:offset+32]
+            offset += 32
+        else:
+            raise InsufficientData('%d bytes received by TLSServerHello, expected %d for random block' % (
+                data_length, offset + 32))
+
+        # self.session_id_length
+        if data_length >= offset+1:
+            self.session_id_length = struct.unpack(
+                '!B', data[offset:offset+1])[0]
+            offset += 1
+        else:
+            raise InsufficientData(
+                '%d bytes received by TLSServerHello, expected %d for session_id_length' % (data_length, offset + 1))
+
+        # self.session_id
+        if self.session_id_length > 0:
+            if data_length >= offset+self.session_id_length:
+                self.session_id = data[offset:offset+self.session_id_length]
+                offset += self.session_id_length
+            else:
+                raise InsufficientData('%d bytes received by TLSServerHello, expected %d for session_id' % (
+                    data_length, offset + self.session_id_length))
+        else:
+            self.session_id = None
+
+        # self.cipher_suite (single value, two bytes)
+        if data_length >= offset + 2:
+            self.cipher_suite = data[offset:offset+2]
+            offset += 2
+        else:
+            self.cipher_suite = None
+            raise InsufficientData(
+                '%d bytes received by TLSServerHello, expected %d for cipher_suite' % (data_length, offset + 2))
+
+        # self.compression_method (single value, one byte)
+        if data_length >= offset + 1:
+            self.compression_method = data[offset]
+            offset += 1
+        else:
+            raise InsufficientData(
+                '%d bytes received by TLSServerHello, expected %d for compression_method' % (data_length, offset + 1))
+
+
+##############################################################################
+# Some Utility Functions
+##############################################################################
+def keyTypeToString(kt):
+    global keytypes
+    if kt in keytypes:
+        return keytypes[kt]
+    else:
+        try:
+            return "UNKNOWN(%s)" % str(kt)
+        except:
+            return "UNKNOWN(%s)" % repr(kt)
+
+
+def parse_x509_dtm(dtm):
+    if type(dtm) == bytes:
+        dtm = dtm.decode('utf-8')
+    # Fmt: YYYYMMDDhhmmssZ
+    t = time.strptime(dtm, '%Y%m%d%H%M%SZ')
+    return time.strftime('%Y-%m-%d %H:%M:%S', t)
+
+
+def render_x509_object(n):
+    output = b''
+    for component in n.get_components():
+        output += b"%s=%s " % component
+    return output.rstrip().decode('utf-8')
+
+
+def openSSL_cert_to_info_dictionary(c):
+    d = {'fingerprints': {}}
+    for h in ('md5', 'sha1', 'sha256'):
+        d['fingerprints'][h] = c.digest(h).decode('utf-8')
+
+    d['subject'] = render_x509_object(c.get_subject())
+    d['subject_cn'] = c.get_subject().CN
+    d['issuer'] = render_x509_object(c.get_issuer())
+    d['notAfter'] = parse_x509_dtm(c.get_notAfter())
+    d['notBefore'] = parse_x509_dtm(c.get_notBefore())
+    #
+    # Look for subjectAltName
+    #
+    for i in range(0, c.get_extension_count()):
+        ext = c.get_extension(i)
+        if ext.get_short_name() == b'subjectAltName':
+            d['subjectAltName'] = str(ext)
+    public_key = c.get_pubkey()
+    d['pubkey_bits'] = public_key.bits()
+    d['pubkey_type'] = keyTypeToString(public_key.type())
+    d['pubkey_sha1'] = hashlib.sha1(OpenSSL.crypto.dump_publickey(
+        OpenSSL.crypto.FILETYPE_ASN1, public_key)).hexdigest()
+    return d
+
+
+def split_subjectAltName_string(subjectAltName):
+    l = []
+    for an in subjectAltName.split(', '):
+        if an.startswith('DNS:'):
+            an = an[4:]
+        l.append(an)
+    return l
+
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+
+    def __init__(self):
+        super().__init__(
+            name="tls",
+            author="amm",
+            description="Extract interesting metadata from TLS connection setup",
+            bpf="tcp and (port 443 or port 993 or port 25 or port 587 or port 465 or port 5269 or port 995 or port 3389)",
+            output=AlertOutput(label=__name__),
+            longdescription="""
+Extract interesting metadata from TLS connection setup, including the ClientHello and Certificate handshake structures.
+
+For JA3 support (ClientHello hash), install module pyja3
+            """
+        )
+
+    def premodule(self):
+        if not ja3_available:
+            self.debug("ja3 capability disabled due to missing python module")
+
+    def connection_handler(self, conn):
+
+        inverted_ssl = False
+        info = conn.info()
+        client_names = set()  # Agregate list of names specified by client
+        server_names = set()  # Agregate list of names specified by server
+        certs_cs = []
+        certs_sc = []
+        server_cipher = None
+        client_cipher_list = []
+
+        for blob in conn.blobs:
+
+            blob.reassemble(allow_overlap=True, allow_padding=True)
+            data = blob.data
+            offset = 0
+
+            while offset < len(data):
+
+                tlsrecord = None
+                try:
+                    tlsrecord = TLS(data[offset:])
+                    offset += tlsrecord.recordbytes
+
+                    if tlsrecord.ContentType == SSL3_RT_HANDSHAKE:
+                        for hs in tlsrecord.Handshakes:
+                            #
+                            # Client hello.  Looking for inversion.
+                            #
+                            if hs.HandshakeType == SSL3_MT_CLIENT_HELLO:
+                                if blob.direction != 'cs':
+                                    inverted_ssl = True
+                                if 'server_name' in hs.extensions:
+                                    for server in hs.extensions['server_name']:
+                                        client_names.add(
+                                            server.decode('utf-8'))
+                                if ja3_available:
+                                    info['ja3'] = hs.ja3()
+                                    info['ja3_digest'] = hs.ja3_digest()
+                                client_cipher_list = hs.cipher_suites
+
+                            elif hs.HandshakeType == SSL3_MT_SERVER_HELLO:
+                                server_cipher = hs.cipher_suite
+
+                            #
+                            # Certificate.  Looking for first server cert.
+                            #
+                            elif hs.HandshakeType == SSL3_MT_CERTIFICATE:
+                                for cert in hs.Certificates:
+                                    cert_info = openSSL_cert_to_info_dictionary(
+                                        cert)
+                                    if blob.direction == 'cs':
+                                        certs_cs.append(cert_info)
+                                    else:
+                                        certs_sc.append(cert_info)
+
+                except InsufficientData:
+                    self.log('Skipping small blob: %s\n' % (sys.exc_info()[1]))
+                    offset += len(data)
+                except UnsupportedOption:
+                    self.log('Unsupported type: %s\n' % (sys.exc_info()[1]))
+                    offset += len(data)
+                except:
+                    offset += len(data)
+                    self.log('Unknown error in connectionHandler: %s' %
+                             sys.exc_info()[1])
+                    break
+
+        # Post processing
+        if inverted_ssl:
+            info['inverted_ssl'] = True
+            info['client_certs'] = certs_sc
+            info['server_certs'] = certs_cs
+        else:
+            info['client_certs'] = certs_cs
+            info['server_certs'] = certs_sc
+        if len(info['client_certs']):
+            client_names.add(info['client_certs'][0]['subject_cn'])
+        if len(info['server_certs']):
+            server_names.add(info['server_certs'][0]['subject_cn'])
+            try:
+                server_names.update(split_subjectAltName_string(
+                    info['server_certs'][0]['subjectAltName']))
+            except KeyError:
+                pass
+        info['client_names'] = list(client_names)
+        info['server_names'] = list(server_names)
+        # Cipher Lists
+        if server_cipher in client_cipher_list:
+            cipher_index = client_cipher_list.index(server_cipher)
+        else:
+            cipher_index = None
+        info['cipher_index'] = cipher_index
+        try:
+            info['cipher_text'] = ciphersuit_text[struct.unpack('!H', server_cipher)[
+                0]]
+        except:
+            info['cipher_text'] = 'UNKNOWN'
+
+        #
+        # Determine output message
+        #
+        if len(client_names) + len(server_names) == 0:
+            return conn
+        client_name = ','.join(info['client_names'])
+        server_name = ','.join(info['server_names'])
+        if len(client_name) and client_name != server_name:
+            msg = "%s / %s" % (client_name, server_name)
+        else:
+            msg = server_name
+        self.write(msg, **info)
+        return conn
+
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+"""
+Finds the top-talkers in a file or on an interface based on byte count.
+"""
+
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            name="Top Talkers",
+            description="Find top-talkers based on byte count",
+            author="dev195",
+            bpf="tcp or udp",
+            output=AlertOutput(label=__name__),
+            optiondict={
+                "top_x": {
+                    "type": int,
+                    "default": 20,
+                    "help": "Only display the top X results (default: 20)",
+                    "metavar": "X"
+                },
+                "total": {
+                    "action": "store_true",
+                    "help": "Sum byte counts from both directions instead of separate entries for individual directions"
+                },
+                "h": {
+                    "action": "store_true",
+                    "help": "Print byte counts in human-readable format"
+                }
+            },
+            longdescription="""
+Finds top 20 connections with largest transferred byte count.
+
+Can be configured to display an arbitrary Top X list with arguments.
+
+Does not pass connections down plugin chain.
+"""
+        )
+
+    def premodule(self):
+        """
+        Initialize a list to hold the top X talkers
+        Format of each entry:
+            (bytes, direction, Connection object)
+        """
+        self.top_talkers = [(0, '---', None)]
+
+    def connection_handler(self, conn):
+        if self.total:
+            # total up the client and server bytes
+            self.__process_bytes(conn.clientbytes + conn.serverbytes, '<->', conn)
+        else:
+            # otherwise, treat client and server bytes separately
+            self.__process_bytes(conn.clientbytes, '-->', conn)
+            self.__process_bytes(conn.serverbytes, '<--', conn)
+
+    def postmodule(self):
+        "Iterate over the entries in top_talkers list and print them"
+        for bytecount, direction, conn in self.top_talkers:
+            if conn is None:
+                break
+            if self.h:
+                byte_display = human_readable_filesize(bytecount)
+            else:
+                byte_display = "{} B".format(bytecount)
+            msg = "client {} server {}".format(direction, byte_display)
+            self.write(msg, **conn.info(), dir_arrow="->")
+
+    def __process_bytes(self, bytecount, direction, conn):
+        """
+        Check if the bytecount for a connection belongs in top_talkers
+        If so, insert it into the list and pop off the lowest entry
+        """
+        for i, oldbytecount in enumerate(self.top_talkers):
+            if bytecount >= oldbytecount[0]:
+                self.top_talkers.insert(i, (bytecount, direction, conn))
+                break
+
+        while len(self.top_talkers) > self.top_x:
+            self.top_talkers.pop(-1)
+"""ISO Transport Service on top of the TCP (TPKT)."""
+
+from pypacker import pypacker
+
+# TPKT - RFC 1006 Section 6
+# http://www.faqs.org/rfcs/rfc1006.html
+
+
+class TPKT(pypacker.Packet):
+	__hdr__ = (
+		("v", "B", 3),
+		("rsvd", "B", 0),
+		("len", "H", 0)
+	)
+"""
+Only follows connections that match user-provided IP addresses and ports. Is
+generally chained with other plugins.
+"""
+
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+    def __init__(self, **kwargs):
+        super().__init__(
+            name="track",
+            author="twp,dev195",
+            description="Only follow connections that match user-provided IP addresses and ports",
+            longdescription="""Only follow connections that match user-provided IP addresses
+
+IP addresses can be specified with --track_source and --track_target.
+Multiple IPs can be used with commas (e.g. --track_source=192.168.1.1,127.0.0.1).
+Ports can be included with IP addresses by joining them with a 'p' (e.g. --track_target=192.168.1.1p80,127.0.0.1).
+Ports can be used alone with just a 'p' (e.g. --track_target=p53).
+CIDR notation is okay (e.g. --track_source=196.168.0.0/16).
+
+--track_source : used to limit connections by the IP that initiated the connection (usually the client)
+--trace_target : used to limit connections by the IP that received the connection (usually the server)
+--track_alerts : used to display optional alerts indicating when a connection starts/ends""",
+            bpf="ip or ip6",
+            output=AlertOutput(label=__name__),
+            optiondict={
+                "target": {
+                    "default": [],
+                    "action": "append",
+                    "metavar": "IPpPORT"},
+                "source": {
+                    "default": [],
+                    "action": "append",
+                    "metavar": "IPpPORT"},
+                "alerts": {
+                    "action": "store_true"}
+                }
+            )
+        self.sources = []
+        self.targets = []
+
+    def __split_ips(self, input):
+        """
+        Used to split --track_target and --track_source arguments into
+        list-of-lists used in the connection handler
+        """
+        return_val = []
+        for piece in input.split(','):
+            if 'p' in piece:
+                ip, port = piece.split('p', 1)
+                try:
+                    port = int(port)
+                except ValueError as e:
+                    self.error("Could not parse port number in {!r} - {!s}".format(piece, e))
+                    sys.exit(1)
+                if 0 < port > 65535:
+                    self.error("Could not parse port number in {!r} - must be in valid port range".format(piece))
+                    sys.exit(1)
+            else:
+                ip, port = piece, None
+            if '/' in ip:
+                try:
+                    ip = ipaddress.ip_network(ip)
+                except ValueError as e:
+                    self.error("Could not parse CIDR netrange - {!s}".format(e))
+                    sys.exit(1)
+            elif ip:
+                try:
+                    ip = ipaddress.ip_address(ip)
+                except ValueError as e:
+                    self.error("Could not parse IP address - {!s}".format(e))
+                    sys.exit(1)
+            else:
+                ip = None
+            return_val.append((ip, port))
+        return return_val
+
+    def __check_ips(self, masterip, masterport, checkip, checkport):
+        "Checks IPs and ports for matches against the user-selected values"
+        # masterip, masterport are the values selected by the user
+        # checkip, checkport are the values to be checked against masters
+        ip_okay = False
+        port_okay = False
+
+        if masterip is None:
+            ip_okay = True
+        elif (isinstance(masterip, (ipaddress.IPv4Network, ipaddress.IPv6Network))
+            and checkip in masterip):
+                ip_okay = True
+        elif (isinstance(masterip, (ipaddress.IPv4Address, ipaddress.IPv6Address))
+            and masterip == checkip):
+                ip_okay = True
+
+        if masterport is None:
+            port_okay = True
+        elif masterport == checkport:
+            port_okay = True
+
+        if port_okay and ip_okay:
+            return True
+        else:
+            return False
+
+
+    def premodule(self):
+        if self.target:
+            for tstr in self.target:
+                self.targets.extend(self.__split_ips(tstr))
+        if self.source:
+            for sstr in self.source:
+                self.sources.extend(self.__split_ips(sstr))
+        self.logger.debug("targets: {!s}".format(self.targets))
+        self.logger.debug("sources: {!s}".format(self.sources))
+
+    def connection_handler(self, conn):
+        if self.targets:
+            conn_okay = False
+            for target in self.targets:
+                targetip = target[0]
+                targetport = target[1]
+                serverip = ipaddress.ip_address(conn.serverip)
+                serverport = conn.serverport
+                if self.__check_ips(targetip, targetport, serverip, serverport):
+                    conn_okay = True
+                    break
+            if not conn_okay:
+                return
+
+        if self.sources:
+            conn_okay = False
+            for source in self.sources:
+                sourceip = source[0]
+                sourceport = source[1]
+                clientip = ipaddress.ip_address(conn.clientip)
+                clientport = conn.clientport
+                if self.__check_ips(sourceip, sourceport, clientip, clientport):
+                    conn_okay = True
+                    break
+            if not conn_okay:
+                return
+
+        if self.alerts:
+            self.write("matching connection", **conn.info())
+
+        return conn
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+
+"""TriggerList for handling dynamic headers."""
+
+logger = logging.getLogger("pypacker")
+
+TRIGGERLIST_CONTENT_SIMPLE = {bytes, tuple}
+
+
+class TriggerList(list):
+	"""
+	List with trigger-capabilities representing a Packet header.
+	This list can contain any type of raw bytes, tuples like (key, value)
+	or packets. Calling bin() will reassemble a content like
+	[b"somebytes", mypacket, ("tuplekey", "tuplevalue")]
+	to this: b"somebytes" + mypacket.bin() + ("tuplekey", "tuplevalue")[1].
+	Custom reassemblation for tuples can be done by overwriting "_pack()".
+	"""
+
+	def __init__(self, packet, headername, dissect_callback=None, buffer=b""):
+		"""
+		packet -- packet where this TriggerList gets integrated
+		dissect_callback -- callback which dessects byte string b"buffer", returns [a, b, c, ...]
+		buffer -- memoryview (standard init) or byte string (packet called pack_header()) for dissecting
+		"""
+		super().__init__()
+		# Set by external Packet
+		self._packet = packet
+		self._headername = headername
+		self._dissect_callback = dissect_callback
+		self._cached_bin = buffer
+		#logger.debug("Triggerlist %r: buffer type=%r" % (self.__class__, type(buffer)))
+
+	def _before_change(self):
+		if self._packet._unpacked is False: # noqa E712
+			# Before changing TriggerList we need to unpack or
+			# cached header won't fit on _unpack(...).
+			# Ignored if still in dissect (_unpacked == None).
+			# This is called before any changes to TriggerList so place it here.
+			self._packet._unpack()
+
+		if self._dissect_callback is None:
+			# Already dissected, ignore
+			return
+
+		try:
+			initial_list_content = self._dissect_callback(self._cached_bin)
+		except:
+			#except Exception as ex:
+			# If anything goes wrong: raw bytes will be accessible in any case
+			#logger.debug("Failed to dissect in TL")
+			#logger.exception(ex)
+
+			if type(self._cached_bin) == memoryview:
+				self._cached_bin = self._cached_bin.tobytes()
+
+			initial_list_content = [self._cached_bin]
+
+		self._dissect_callback = None
+		# This is re-calling _before_change(), avoid by calling parent version
+		#logger.debug("Initial list content=%r" % str(initial_list_content))
+		super(TriggerList, self).extend(initial_list_content) # pylint: disable=super-with-arguments
+		# Add listener to packets in list. Nothing has changed, no notify needed.
+		self._refresh_listener(initial_list_content, notify_change=False)
+
+	"""
+	# Only needed by DNS, too few use cases
+	def _after_change(self):
+		pass
+	"""
+
+	def __getitem__(self, needle):
+		self._before_change()
+
+		if type(needle) != types.FunctionType:
+			return super().__getitem__(needle)
+
+		idx_value = []
+		idx = 0
+
+		for idx, value in enumerate(self):
+			try:
+				if needle(value):
+					idx_value.append((idx, value))
+			except:
+				# Don't care. Note: gets inperformant if too many exceptions
+				pass
+				#logger.exception(ex)
+		return idx_value
+
+	def __iadd__(self, v):
+		"""Item can be added using '+=', use 'append()' instead."""
+		self._before_change()
+		super().__iadd__(v)
+		self._refresh_listener([v])
+		return self
+
+	def __setitem__(self, needle, value):
+		self._before_change()
+		idxs_to_set = []
+
+		if type(needle) != types.FunctionType:
+			idxs_to_set.append(needle)
+		else:
+			idx = 0
+
+			for idx, value_it in enumerate(self):
+				try:
+					if needle(value_it):
+						idxs_to_set.append(idx)
+				except:
+					# Don't care. Note: gets inperformant if too many exceptions
+					pass
+
+		for idx_to_set in idxs_to_set:
+			try:
+				# Remove listener from old packet which gets overwritten
+				self[idx_to_set].remove_change_listener(None, remove_all=True)
+			except:
+				pass
+			super().__setitem__(idx_to_set, value)
+
+		if len(idxs_to_set) > 0:
+			self._refresh_listener([value])
+
+	def __delitem__(self, k):
+		self._before_change()
+		if type(k) is int:
+			itemlist = [self[k]]
+		else:
+			# Assume slice: [x:y]
+			itemlist = self[k]
+		super().__delitem__(k)
+		self._refresh_listener(itemlist, connect_packet=False)
+
+	def __len__(self):
+		self._before_change()
+		return super().__len__()
+
+	def __iter__(self):
+		self._before_change()
+		return super().__iter__()
+
+	def append(self, v):
+		self._before_change()
+		super().append(v)
+		self._refresh_listener([v])
+
+	def extend(self, v):
+		self._before_change()
+		super().extend(v)
+		self._refresh_listener(v)
+
+	def insert(self, pos, v):
+		self._before_change()
+		super().insert(pos, v)
+		self._refresh_listener([v])
+
+	def clear(self):
+		self._before_change()
+		items = list(self)
+		super().clear()
+		self._refresh_listener(items, connect_packet=False)
+
+	def _refresh_listener(self, val, connect_packet=True, notify_change=True):
+		"""
+		Handle modifications of this TriggerList (adding, removing, ...).
+		WARNING: packets can only be put in one tl once at a time
+
+		val -- list of bytes, tuples or packets
+		connect_packet -- Connect packet to this tl and parent packet, otherwise disconnect
+		"""
+		for v in val:
+			# Ignore non-packets
+			if type(v) in TRIGGERLIST_CONTENT_SIMPLE:
+				continue
+
+			if connect_packet:
+				# Allow packet in TL to access packet containing this TL:
+				# packet1( TL[packet2->"access to packet1"] )
+				v._triggelistpacket_parent = self._packet
+				# TriggerList observes changes on packets:
+				# base packet <- TriggerList (observes changes, set changed status
+				# in basepacket) <- contained packet (changes)
+				# Add change listener to the packet this TL is contained in.
+				lwrapper = lambda informer: self._notify_change(informer) # pylint: disable=unnecessary-lambda-assignment
+				v._add_change_listener(lwrapper)
+			else:
+				# Remove any old listener
+				v._remove_change_listener()
+				# Remove old parent
+				v._triggelistpacket_parent = None
+		if notify_change:
+			#logger.debug("_refresh_listener -> _notify_change (tl add, remove etc)")
+			self._notify_change(self)
+
+	def _notify_change(self, informer): # pylint: disable=unused-argument
+		"""
+		Inform the Packet having this TriggerList as field:
+		- pkt.tl_name <- tl
+		- pkt.tl_name <- tl <- pkt
+		Called by: this list on changes or Packets in this list
+		"""
+		# Format *may* not have changed but we don't know until bin()
+		#logger.debug("tl %r : _notify_change by %r (clearing caches)" % (self.__class__, informer.__class__))
+		self._packet._header_format_cached = None
+		self._packet._header_cached = None
+
+		if self._packet._tlchanged_shared:
+			# Unshare to allow later add()
+			self._packet._tlchanged = {*self._packet._tlchanged}
+			self._packet._tlchanged_shared = False
+
+		self._packet._tlchanged.add(self._headername)
+		self._cached_bin = None
+
+	def entry_to_bytes(self, idx):
+		entry = self[idx]
+		entry_type = type(entry)
+
+		if entry_type is bytes:
+			return entry
+
+		if entry_type is tuple:
+			return self._pack(entry)
+
+		return entry.bin()
+
+	def bin(self, update_auto_fields=True):
+		"""
+		Output the TriggerLists elements as concatenated bytestring.
+		Custom implementations for tuple-handling can be set by overwriting _pack().
+		"""
+		#logger.debug(self.__class__)
+		if self._cached_bin is None:
+			result_arr = []
+			entry_type = None
+
+			for entry in self:
+				entry_type = type(entry)
+
+				if entry_type is bytes:
+					result_arr.append(entry)
+				elif entry_type is tuple:
+					result_arr.append(self._pack(entry))
+				else:
+					# This Must be a packet, otherthise invalid entry!
+					result_arr.append(entry.bin(update_auto_fields=update_auto_fields))
+
+			self._cached_bin = b"".join(result_arr)
+		elif type(self._cached_bin) == memoryview:
+			self._cached_bin = self._cached_bin.tobytes()
+
+		return self._cached_bin
+
+	def _pack(self, tuple_entry):
+		"""
+		This can  be overwritten to convert tuples (key, value) in TriggerLists
+		to bytes (see layer567/http.py)
+		return -- byte string representation of this tuple entry
+			eg (b"Host", b"localhost") -> b"Host: localhost"
+		"""
+		# Default implementation: return value
+		return tuple_entry[1]
+
+	def __repr__(self):
+		self._before_change()
+		return super().__repr__()
+
+	def __eq__(self, obj):
+		self._before_change()
+		return super().__eq__(obj)
+
+	def __str__(self):
+		self._before_change()
+		tl_descr_l = []
+		contains_pkt = False
+
+		for val_tl in self:
+			val_tl_type = type(val_tl)
+
+			if val_tl_type in TRIGGERLIST_CONTENT_SIMPLE:
+				if val_tl_type == bytes:
+					# bytes() needed in case of memoryview
+					tl_descr_l.append("%s" % bytes(val_tl))
+				else:
+					# bytes() needed in case of memoryview
+					tl_descr_l.append("(%r, %s" % (val_tl[0], bytes(val_tl[1])))
+			else:
+				# Assume packet
+				#pkt_fqn = val_tl.__module__[9:] + "." + val_tl.__class__.__name__
+				#tl_descr_l.append(pkt_fqn)
+				tl_descr_l.append("%s" % val_tl)
+				contains_pkt = True
+
+		if not contains_pkt or len(tl_descr_l) == 0:
+			# Oneline output
+			return "[" + ", ".join(tl_descr_l) + "]"
+
+		# Multiline output
+		# TODO: deeper output = more ">"? -> May create trouble on many entries
+		final_descr = ["(see below)\n" + ">" * 10 + "\n"]
+
+		for idx, val in enumerate(tl_descr_l):
+			idx_descr = "[%d]" % idx
+			final_descr.append("-> %s:\n%s\n" % (idx_descr, val))
+
+		final_descr.append("<" * 10)
+		return "".join(final_descr)
+"""
+Uses the Threshold Random Walk algorithm described in this paper:
+
+Limitations to threshold random walk scan detection and mitigating enhancements
+Written by: Mell, P.; Harang, R.
+http://ieeexplore.ieee.org/xpls/icp.jsp?arnumber=6682723
+"""
+
+
+o0 = 0.8  # probability IP is benign given successful connection
+o1 = 0.2  # probability IP is a scanner given successful connection
+is_success = o0/o1
+is_failure = o1/o0
+
+max_fp_prob = 0.01
+min_detect_prob = 0.99
+hi_threshold = min_detect_prob / max_fp_prob
+lo_threshold = max_fp_prob / min_detect_prob
+
+OUTPUT_FORMAT = "(%(plugin)s) %(data)s\n"
+
+class DshellPlugin(dshell.core.PacketPlugin):
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            name="trw",
+            author="dev195",
+            bpf="tcp",
+            output=Output(label=__name__, format=OUTPUT_FORMAT),
+            description="Uses Threshold Random Walk to detect network scanners",
+            optiondict={
+                "mark_benigns": {
+                    "action": "store_true",
+                    "help": "Use an upper threshold to mark IPs as benign, thus removing them from consideration as scanners"
+                }
+            }
+        )
+        self.synners = set()
+        self.ip_scores = defaultdict(lambda: 1)
+        self.classified_ips = set()
+
+    def check_score(self, ip, score):
+        if self.mark_benigns and score >= hi_threshold:
+            self.write("IP {} is benign (score: {})".format(ip, score))
+            self.classified_ips.add(ip)
+        elif score <= lo_threshold:
+            self.write("IP {} IS A SCANNER! (score: {})".format(ip, score))
+            self.classified_ips.add(ip)
+
+    def packet_handler(self, pkt):
+        if not pkt.tcp_flags:
+            return
+
+        # If we have a SYN, store it in a set and wait for some kind of
+        # response or the end of pcap
+        if pkt.tcp_flags == tcp.TH_SYN and pkt.sip not in self.classified_ips:
+            self.synners.add(pkt.addr)
+            return pkt
+
+        # If we get the SYN/ACK, score the destination IP with a success
+        elif pkt.tcp_flags == (tcp.TH_SYN | tcp.TH_ACK) and pkt.dip not in self.classified_ips:
+            alt_addr = ((pkt.dip, pkt.dport), (pkt.sip, pkt.sport))
+            if alt_addr in self.synners:
+                self.ip_scores[pkt.dip] *= is_success
+                self.check_score(pkt.dip, self.ip_scores[pkt.dip])
+                self.synners.remove(alt_addr)
+            return pkt
+
+        # If we get a RST, assume the connection was refused and score the
+        # destination IP with a failure
+        elif pkt.tcp_flags & tcp.TH_RST and pkt.dip not in self.classified_ips:
+            alt_addr = ((pkt.dip, pkt.dport), (pkt.sip, pkt.sport))
+            if alt_addr in self.synners:
+                self.ip_scores[pkt.dip] *= is_failure
+                self.check_score(pkt.dip, self.ip_scores[pkt.dip])
+                self.synners.remove(alt_addr)
+            return pkt
+
+
+    def postfile(self):
+        # Go through any SYNs that didn't get a response and assume they failed
+        for addr in self.synners:
+            ip = addr[0][0]
+            if ip in self.classified_ips:
+                continue
+            self.ip_scores[ip] *= is_failure
+            self.check_score(ip, self.ip_scores[ip])
+
+"""
+Wraper for TUN/TAP interfaces.
+https://www.kernel.org/doc/Documentation/networking/tuntap.txt
+
+packets written to /dev/net/tun look like "outer network -> tunX" (coming for another network)
+and get handled by the kernel state machine.
+
+> Prerequisites
+mkdir /dev/net
+# Create the character device /dev/net/XXX and let it point to major number 10, minor number 200.
+# The devnode has to be used in "TuntapInterface -> devnode": When "/dev/net/xxx" is used this
+# will create the interface xxx0
+mknod /dev/net/tunA c 10 200
+mknod /dev/net/tunB c 10 200
+
+mknod /dev/net/tapA c 10 200
+mknod /dev/net/tapB c 10 200
+
+> Test tunnel
+ping4 -c 1  -I tunA0 192.168.12.35; ping4  -c 1 -I tunB0 192.168.12.34
+ping4 -c 1  -I tapA0 192.168.12.35; ping4  -c 1 -I tapB0 192.168.12.34
+
+> Notes
+Routing (fd -> tun/tap -> eth -> internet -> eth -> tun/tap -> fd):
+	tap works (mac_src=anything, mac_dst=tap, ip_src/dst: like tun)
+	tun works (ip_src=tun, ip_dst=server)
+		Advantage over tap: no icmp-messages on returning packets.
+
+> Useful commands
+ip tuntap add dev tun0 mode tun user mike group users
+ip addr add 192.168.3.1/24 dev tun0
+ip rule list; ip link show
+ip tuntap del dev tun0 mode tun; ip tuntap del dev tun1 mode tun;
+# If "ip tuntap del dev tunA0 mode tun" does not work
+ip link delete tunA0
+"""
+
+
+logger = logging.getLogger("pypacker")
+
+# Some constants used to ioctl the device file
+TUNSETIFF	= 0x400454CA
+TUNSETOWNER	= TUNSETIFF + 2
+SG_SET_TIMEOUT	= 0x2201
+IFF_TUN		= 0x0001
+IFF_TAP		= 0x0002
+#  The kernel adds a 4-byte preamble to the frame, avoid this
+# TODO: set lowest layer based on meta info
+"""
+3.2 Frame format:
+If flag IFF_NO_PI is not set each frame format is:
+	Flags [2 bytes]
+	Proto [2 bytes]
+	Raw protocol(IP, IPv6, etc) frame.
+"""
+IFF_NO_PI	= 0x1000
+
+TYPE_TUN	= 0
+TYPE_TAP	= 1
+
+TYPE_STR_DCT = {TYPE_TUN: "tun", TYPE_TAP: "tap"}
+
+
+def exec_syscmd(cmd):
+	output = subprocess.getoutput(cmd)
+	logger.info(output)
+
+
+class TuntapInterface():
+	def __init__(self, # pylint: disable=too-many-arguments
+		iface_name,
+		devnode="/dev/net/tunA",
+		ifacetype=TYPE_TUN,
+		ip_src="12.34.56.1",
+		ip_dst="12.34.56.2",
+		is_local_tunnel=False,
+		mtu=1500):
+		"""
+		iface_name -- name of the local interface to be used. See devnode.
+		devnode -- Path to the devnoce used for this interface. /dev/net/tunA will result in iface_name tunA0, tunA1 etc.
+		ifacetype -- TYPE_TUN or TYPE_TAP
+		ip_src -- Local IP address of the interface iface_name (/32 address will be used)
+		ip_dst -- Remote connection point of the local interface iface_name (/32 address will be used)
+		is_local_tunnel -- True if endpoint is also local, otherwise False
+		"""
+
+		self._closed = False
+		self._iface_name = iface_name
+		self._devnode = devnode
+		self._is_newly_created = False
+		self._ifacetype = ifacetype
+		self._is_local_tunnel = is_local_tunnel
+
+		TuntapInterface.create_devnode(devnode)
+
+		# Open TUN or TAP device file
+		self._iface_fd = open(devnode, "r+b", buffering=0) # pylint: disable=consider-using-with
+		tuntap_opt = IFF_TUN if ifacetype == TYPE_TUN else IFF_TAP
+		self._ifr = struct.pack("16sH", iface_name.encode("UTF-8"), tuntap_opt | IFF_NO_PI)
+		# Connect interface name with file descriptor. Creates the actual network interface.
+		ioctl(self._iface_fd, TUNSETIFF, self._ifr)
+		#ioctl(self._iface_fd, SG_SET_TIMEOUT, 1000)
+		self._fileno_iface_fd = self._iface_fd.fileno()
+		# Optionally, we want it be accessed by the normal user.
+		# ioctl(self._iface_fd, TUNSETOWNER, 1000)
+
+		if ip_src is not None and ip_dst is not None:
+			TuntapInterface.configure_interface(iface_name, ip_src, ip_dst, mtu=mtu, is_local_tunnel=is_local_tunnel)
+		utils.set_interface_state(iface_name, state_active=True)
+
+	is_newly_created = property(lambda self: self._is_newly_created)
+
+	@staticmethod
+	def create_devnode(devnode):
+		"""
+		Create the given devnode if not already present.
+		devnode -- Name of the devnode which will be created: "/dev/net/devnode"
+		"""
+		if pathlib.Path(devnode).exists():
+			#logger.debug("devnode %s already exists" % devnode)
+			return
+
+		#logger.debug("Creating devnode: %s" % devnode)
+		exec_syscmd("mkdir /dev/net")
+		exec_syscmd("mknod %s c 10 200" % devnode)
+
+	@staticmethod
+	def configure_interface(iface_name, ip_src, ip_dst, mtu=1500, is_local_tunnel=False):
+		"""
+		is_local_tunnel -- Adjust routing rules so that this interface can be used locally (eg tun0 <-> tun1
+			where tun0 and tun1 are both local interfaces)
+		"""
+		# Wait for interface to be created
+		#time.sleep(1)
+		#exec_syscmd("ifconfig %s %s/24" % (iface_name, ip_src))
+		exec_syscmd("ifconfig %s %s/24 pointopoint %s mtu %d" % (iface_name, ip_src, ip_dst, mtu))
+		#exec_syscmd("ifconfig %s %s pointopoint %s" % (iface_name, ip_src, ip_dst))
+		#exec_syscmd("ifconfig %s %s/24" % (iface_name, ip_src))
+
+		if is_local_tunnel:
+			# Packet with target ip_dst goes through "lo" if ip_dst is on the same host.
+			# Avoid this by removing local rules
+			exec_syscmd("ip route del %s table local" % ip_src)
+			# pointopoint creates implicit rule in "main"
+			# Problem if src/dst tun are on the same host: packets pop out of tun1 (target), but the kernel
+			# does not recognize them as being addressed to the local host. (we removed the rule above)
+			# Solution: distinct routing decisions and configure routing in such a way that the local
+			# type routes are only "seen" by the input routing decision
+			tid = 13
+			exec_syscmd("ip route add local %s dev %s table %d" % (ip_src, iface_name, tid))
+			# make sure previous rules have been removed
+			# iif NAME = select the incoming device to match
+			# http://man7.org/linux/man-pages/man8/ip-rule.8.html
+			exec_syscmd("ip rule del iif %s lookup %d" % (iface_name, tid))
+			exec_syscmd("ip rule add iif %s lookup %d" % (iface_name, tid))
+
+	def read(self):
+		"""Read an IP packet been sent to this TUN device."""
+		try:
+			return os_read(self._fileno_iface_fd, 1024 * 4)
+		except TypeError:
+			# read after closing
+			return None
+
+	def write(self, bts):
+		"""Write an IP packet to this TUN device."""
+		try:
+			os_write(self._fileno_iface_fd, bts)
+		except TypeError:
+			# write after closing
+			pass
+
+	def close(self):
+		if self._closed:
+			return
+		self._closed = True
+
+		try:
+			#self._iface_fd.close()
+			os.close(self._fileno_iface_fd)
+			self._fileno_iface_fd = None
+		except Exception as ex:
+			logger.exception(ex)
+
+		if self._is_local_tunnel:
+			exec_syscmd("ip rule del iif %s lookup %d" % (self._iface_name, 13))
+
+
+class LocalTunnel():
+	"""
+	Local Back-to-back tunnel based on tun interfaces: local <-> ip:tun1:dev <-> dev:tun2:ip <-> local
+	"""
+	def __init__(self, ip_iface_a="192.168.2.1", ip_iface_b="192.168.3.1"):
+		self._ifacetype = TYPE_TAP
+		islocaltunnel = True
+		ifacetype_str = TYPE_STR_DCT[self._ifacetype]
+		self._state_active = False
+
+		iface_name_a = ifacetype_str + "A0"
+		self._dev_a = TuntapInterface(
+			iface_name=iface_name_a,
+			devnode="/dev/net/" + ifacetype_str + "A",
+			ifacetype=self._ifacetype,
+			ip_src=ip_iface_a,
+			is_local_tunnel=islocaltunnel
+		)
+		iface_name_b = ifacetype_str + "B0"
+		self._dev_b = TuntapInterface(
+			iface_name=iface_name_b,
+			devnode="/dev/net/" + ifacetype_str + "B",
+			ifacetype=self._ifacetype,
+			ip_src=ip_iface_b,
+			is_local_tunnel=islocaltunnel
+		)
+
+		utils.flush_arp_cache()
+		#mac_A = utils.get_mac_for_iface(iface_name_a)
+		#mac_B = utils.get_mac_for_iface(iface_name_b)
+		#utils.add_arp_entry(ip_iface_a, mac_A, iface_name_b)
+		#utils.add_arp_entry(ip_iface_b, mac_B, iface_name_a)
+
+		self._rs_thread_a = None
+		self._rs_thread_b = None
+
+	def _start_cycler_threads(self):
+		self._rs_thread_a = threading.Thread(target=LocalTunnel.read_write_cycler,
+			args=[self, self._dev_a, self._dev_b, "1to2"])
+		self._rs_thread_b = threading.Thread(target=LocalTunnel.read_write_cycler,
+			args=[self, self._dev_b, self._dev_a, "2to1"])
+		self._rs_thread_a.start()
+		self._rs_thread_b.start()
+
+	@staticmethod
+	def read_write_cycler(obj, iface_in, iface_out, name): # pylint: disable=unused-argument
+		while obj._state_active:
+			try:
+				bts = iface_in.read()
+				try:
+					# Make sure this is parsable
+					_ = ip.IP(bts) if obj._ifacetype == TYPE_TUN else ethernet.Ethernet(bts)
+					#logger.debug("Sending in cycler %s (%s -> %s):\n%s\n%s" %
+					#	(name, iface_in._iface_name, iface_out._iface_name, bts, pkt))
+					iface_out.write(bts)
+				except:
+					pass
+			except ValueError as ex:
+				logger.exception(ex)
+				break
+			except OSError as ex:
+				logger.exception(ex)
+				break
+			except Exception as ex:
+				logger.exception(ex)
+				break
+
+	def set_state(self, state_active):
+		if self._state_active is None:
+			return
+
+		if state_active == self._state_active:
+			return
+
+		self._state_active = state_active
+
+		if state_active:
+			self._start_cycler_threads()
+		else:
+			self._dev_a.close()
+			self._dev_b.close()
+
+			for th in [self._rs_thread_a, self._rs_thread_b]:
+				try:
+					th.join()
+				except:
+					pass
+
+			self._state_active = None
+"""Provides types used internally"""
+
+
+IPAddress = Union[str, IPv6Address, IPv4Address]
+
+
+####################################################################
+#
+#
+#           DSHELL T SCRIPTS END
+#
+###################################################################
+
+
+####################################################################
+#
+#
+#           DSHELL U THROUGH X SCRIPTS START
+#
+###################################################################
+
+
+"""
+User Datagram Protocol (UDP)
+
+RFC 768 - User Datagram Protocol
+RFC 2460 - Internet Protocol, Version 6 (IPv6) Specification
+RFC 2675 - IPv6 Jumbograms
+RFC 4113 - Management Information Base for the UDP
+RFC 5405 - Unicast UDP Usage Guidelines for Application Designers
+"""
+
+# Avoid references for performance reasons
+in_cksum = checksum.in_cksum
+
+logger = logging.getLogger("pypacker")
+
+UDP_PORT_MAX	= 65535
+
+
+UDP_PROTO_TELNET	= 23
+UDP_PROTO_DNS		= (53, 5353)
+UDP_PROTO_DHCP		= (67, 68)
+UDP_PROTO_TFTP		= 69
+UDP_PROTO_PMAP		= 111
+UDP_PROTO_NTP		= 123
+UDP_PROTO_RADIUS	= (1812, 1813, 1645, 1646)
+UDP_PROTO_STUN		= 3478
+UDP_PROTO_RTP		= (5004, 5005)
+UDP_PROTO_SIP		= (5060, 5061)
+UDP_PROTO_ISO15118	= 15118
+
+
+class UDP(pypacker.Packet):
+	__hdr__ = (
+		("sport", "H", 0xDEAD),
+		("dport", "H", 0, FIELD_FLAG_AUTOUPDATE | FIELD_FLAG_IS_TYPEFIELD),
+		("ulen", "H", 8, FIELD_FLAG_AUTOUPDATE),  # header + body, min 8
+		("sum", "H", 0, FIELD_FLAG_AUTOUPDATE)
+	)
+
+	__handler__ = {
+		UDP_PROTO_TELNET: telnet.Telnet,
+		UDP_PROTO_TFTP: tftp.TFTP,
+		UDP_PROTO_DNS: dns.DNS,
+		UDP_PROTO_DHCP: dhcp.DHCP,
+		UDP_PROTO_ISO15118: iso15118.SDP,
+		UDP_PROTO_PMAP: pmap.Pmap,
+		UDP_PROTO_NTP: ntp.NTP,
+		UDP_PROTO_RADIUS: radius.Radius,
+		UDP_PROTO_RTP: rtp.RTP,
+		UDP_PROTO_SIP: sip.SIP,
+		UDP_PROTO_STUN: stun.STUN
+	}
+
+	def _update_fields(self):
+		# UDP-checksum needs to be updated on one of the following:
+		# - this layer itself or any upper layer changed
+		# - changes to the IP-pseudoheader
+		# There is no update on user-set checksums.
+		#changed = self._changed()
+		update = True
+
+		if self.ulen_au_active:
+			self.ulen = len(self)
+
+		#self._update_higherlayer_id()
+
+		try:
+			# changes to IP-layer, don't mind if this isn't IP
+			if not self._lower_layer._header_value_changed:
+				# lower layer doesn't need update, check for changes in present and upper layer
+				# logger.debug("lower layer did NOT change!")
+				update = True
+		except AttributeError:
+			# assume not an IP packet: we can't calculate the checksum
+			update = False
+
+		if update and self.sum_au_active:
+			self._calc_sum()
+
+	def _dissect(self, buf):
+		ports = [unpack_H(buf[0:2])[0], unpack_H(buf[2:4])[0]]
+
+		try:
+			# source or destination port should match
+			htype = [x for x in ports if x in pypacker.Packet._id_handlerclass_dct[UDP]][0]
+			return 8, htype
+		except:
+			# No type found
+			pass
+		return 8
+
+	def _calc_sum(self):
+		"""Recalculate the UDP-checksum."""
+		# TCP and underwriting are freaky bitches: we need the IP pseudoheader to calculate their checksum
+		# logger.debug("UDP sum recalc, sport=%s/dport=%s" % (self.sport, self.dport))
+		try:
+			# We need src/dst for checksum-calculation
+			src, dst = self._lower_layer.src, self._lower_layer.dst
+			#logger.debug(src + b" / "+ dst)
+			self.sum = 0
+			udp_bin = self.header_bytes + self.body_bytes
+
+			# IP-pseudoheader, check if version 4 or 6
+			if len(src) == 4:
+				s = pack_ipv4_header(src, dst, 17, len(udp_bin))  # 17 = UDP
+			else:
+				s = pack_ipv6_header(src, dst, 17, len(udp_bin))  # 17 = UDP
+
+			csum = in_cksum(s + udp_bin)
+
+			if csum == 0:
+				csum = 0xFFFF    # RFC 768, p2
+
+			# Get the checksum of concatenated pseudoheader+TCP packet.
+			# Assign via non-shadowed variable to trigger re-packing
+			self.sum = csum
+		except (AttributeError, struct.error):
+			# Not an IP packet as lower layer (src, dst not present) or invalid src/dst
+			pass
+
+	def direction(self, other):
+		direction = 0
+		# logger.debug("checking direction: %s<->%s" % (self, other))
+		if self.sport == other.sport and self.dport == other.dport:
+			direction = pypacker.Packet.DIR_SAME
+		if self.sport == other.dport and self.dport == other.sport:
+			direction = pypacker.Packet.DIR_REV
+		if direction == 0:
+			return pypacker.Packet.DIR_UNKNOWN
+		return direction
+
+	def reverse_address(self):
+		self.sport, self.dport = self.dport, self.sport
+"""
+A collection of useful utilities used in several plugins and libraries.
+"""
+
+
+
+def xor(xinput, key):
+    """
+    Xor an input string with a given character key.
+
+    Arguments:
+        input:  plain text input string
+        key:    xor key
+    """
+    output = ''.join([chr(ord(c) ^ key) for c in xinput])
+    return output
+
+
+def get_data_path():
+    dpath = os.path.dirname(__file__)
+    return os.path.sep.join((dpath, 'data'))
+
+
+def get_plugin_path():
+    dpath = os.path.dirname(__file__)
+    return os.path.sep.join((dpath, 'plugins'))
+
+
+def get_output_path():
+    dpath = os.path.dirname(__file__)
+    return os.path.sep.join((dpath, 'output'))
+
+
+def decode_base64(intext, alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', padchar='='):
+    """
+    Decodes a base64-encoded string, optionally using a custom alphabet.
+
+    Arguments:
+        intext:     input plaintext string
+        alphabet:   base64 alphabet to use
+        padchar:    padding character
+    """
+    # Build dictionary from alphabet
+    alphabet_index = {}
+    for i, c in enumerate(alphabet):
+        if c in alphabet_index:
+            raise ValueError("'{}' used more than once in alphabet".format(c))
+        alphabet_index[c] = i
+    alphabet_index[padchar] = 0
+
+    alphabet += padchar
+
+    outtext = ''
+    intext = intext.rstrip('\n')
+
+    i = 0
+    while i < len(intext) - 3:
+        if (
+            intext[i] not in alphabet
+            or intext[i + 1] not in alphabet
+            or intext[i + 2] not in alphabet
+            or intext[i + 3] not in alphabet
+        ):
+            raise KeyError("Non-alphabet character in encoded text.")
+        val = alphabet_index[intext[i]] * 262144
+        val += alphabet_index[intext[i + 1]] * 4096
+        val += alphabet_index[intext[i + 2]] * 64
+        val += alphabet_index[intext[i + 3]]
+        i += 4
+        for factor in [65536, 256, 1]:
+            outtext += chr(int(val / factor))
+            val = val % factor
+
+    return outtext
+
+
+def printable_text(intext, include_whitespace=True):
+    """
+    Replaces non-printable characters with dots.
+
+    Arguments:
+        intext:     input plaintext string
+        include_whitespace (bool):  set to False to mark whitespace characters
+                                    as unprintable
+    """
+    printable = string.ascii_letters + string.digits + string.punctuation
+    if include_whitespace:
+        printable += string.whitespace
+
+    if isinstance(intext, bytes):
+        intext = intext.decode("ascii", errors="replace")
+
+    outtext = [c if c in printable else '.' for c in intext]
+    outtext = ''.join(outtext)
+
+    return outtext
+
+
+def hex_plus_ascii(data, width=16, offset=0):
+    """
+    Converts a data string into a two-column hex and string layout,
+    similar to tcpdump with -X
+
+    Arguments:
+        data:   incoming data to format
+        width:  width of the columns
+        offset: offset output from the left by this value
+    """
+    output = ""
+    for i in range(0, len(data), width):
+        s = data[i:i + width]
+        if isinstance(s, bytes):
+            outhex = ' '.join(["{:02X}".format(x) for x in s])
+        else:
+            outhex = ' '.join(["{:02X}".format(ord(x)) for x in s])
+        outstr = printable_text(s, include_whitespace=False)
+        outstr = "{:08X}  {:49}  {}\n".format(i + offset, outhex, outstr)
+        output += outstr
+    return output
+
+
+def gen_local_filename(path, origname):
+    """
+    Generates a local filename based on the original. Automatically adds a
+    number to the end, if file already exists.
+
+    Arguments:
+        path:       output path for file
+        origname:   original name of the file to transform
+    """
+
+    tmp = origname.replace("\\", "_")
+    tmp = tmp.replace("/", "_")
+    tmp = tmp.replace(":", "_")
+    localname = ''
+    for c in tmp:
+        if ord(c) > 32 and ord(c) < 127:
+            localname += c
+        else:
+            localname += "%%%02X" % ord(c)
+    localname = os.path.join(path, localname)
+    postfix = ''
+    i = 0
+    while os.path.exists(localname + postfix):
+        i += 1
+        postfix = "_{:04d}".format(i)
+    return localname + postfix
+
+
+def human_readable_filesize(bytecount):
+    """
+    Converts the raw byte counts into a human-readable format
+    https://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size/1094933#1094933
+    """
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB'):
+        if abs(bytecount) < 1024.0:
+            return "{:3.2f} {}".format(bytecount, unit)
+        bytecount /= 1024.0
+    return "{:3.2f} {}".format(bytecount, "YB")
+
+
+# SPDX-License-Identifier: MIT
+
+
+def _project_wheel_metadata(builder: ProjectBuilder) -> importlib.metadata.PackageMetadata:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = pathlib.Path(builder.metadata_path(tmpdir))
+        return importlib.metadata.PathDistribution(path).metadata
+
+
+def project_wheel_metadata(
+    source_dir: StrPath,
+    isolated: bool = True,
+    *,
+    runner: SubprocessRunner = pyproject_hooks.quiet_subprocess_runner,
+) -> importlib.metadata.PackageMetadata:
+    """
+    Return the wheel metadata for a project.
+
+    Uses the ``prepare_metadata_for_build_wheel`` hook if available,
+    otherwise ``build_wheel``.
+
+    :param source_dir: Project source directory
+    :param isolated: Whether or not to run invoke the backend in the current
+                     environment or to create an isolated one and invoke it
+                     there.
+    :param runner: An alternative runner for backend subprocesses
+    """
+
+    if isolated:
+        with DefaultIsolatedEnv() as env:
+            builder = ProjectBuilder.from_isolated_env(
+                env,
+                source_dir,
+                runner=runner,
+            )
+            env.install(builder.build_system_requires)
+            env.install(builder.get_requires_for_build('wheel'))
+            return _project_wheel_metadata(builder)
+    else:
+        builder = ProjectBuilder(
+            source_dir,
+            runner=runner,
+        )
+        return _project_wheel_metadata(builder)
+
+
+__all__ = [
+    'project_wheel_metadata',
+]
+
+
+# Copyright 2013, Michael Stahn
+# Use of this source code is governed by a GPLv2-style license that can be
+# found in the LICENSE file.
+"""
+Utility functions, primarily written for Linux based OS.
+"""
+
+#from pypacker import pypacker as pypacker
+from pypacker import pypacker
+
+
+logger = logging.getLogger("pypacker")
+
+try:
+	import netifaces
+except ImportError:
+	logger.warning("Couldn't load netifaces, some utils won't work")
+
+log = math.log
+mac_bytes_to_str = pypacker.mac_bytes_to_str
+
+
+def switch_wlan_channel(iface, channel, shutdown_prior=False):
+	"""
+	Switch wlan channel to channel.
+	Requirements: ifconfig, iwconfig
+
+	iface -- interface name
+	channel -- channel numer to be set as number
+	shutdown_prior -- shut down interface prior to setting channel
+	"""
+	if shutdown_prior:
+		cmd_call = ["ifconfig", iface, "down"]
+		subprocess.check_call(cmd_call)
+
+	cmd_call = ["iwconfig", iface, "channel", "%d" % channel]
+	subprocess.check_call(cmd_call)
+
+	if shutdown_prior:
+		cmd_call = ["ifconfig", iface, "up"]
+		subprocess.check_call(cmd_call)
+
+
+WLAN_MODE_MANAGED	= 0
+WLAN_MODE_MONITOR	= 1
+WLAN_MODE_UNKNOWN	= 2
+
+_MODE_STR_INT_TRANSLATE = {
+	b"managed": WLAN_MODE_MANAGED,
+	b"monitor": WLAN_MODE_MONITOR,
+	b"": WLAN_MODE_UNKNOWN
+}
+
+PATTERN_MODE	= re.compile(br"Mode:(\w+) ")
+
+
+def get_wlan_mode(iface):
+	"""
+	return -- [MODE_MANAGED | MODE_MONITOR | MODE_UNKNOWN]
+	"""
+	cmd_call = ["iwconfig", iface]
+	output = subprocess.check_output(cmd_call)
+	match = PATTERN_MODE.search(output)
+
+	found_str = match.group(1).lower()
+	return _MODE_STR_INT_TRANSLATE.get(found_str, WLAN_MODE_UNKNOWN)
+
+
+def is_interface_up(iface):
+	"""
+	Requirements: ifconfig
+
+	return -- [True | False]
+	"""
+	cmd_call = ["ifconfig"]
+	pattern_up = re.compile(b"^" + bytes(iface, "UTF-8") + b": flags=", re.MULTILINE)
+	output = subprocess.check_output(cmd_call)
+	return pattern_up.search(output) is not None
+
+
+PATTERN_MODE = re.compile(br"wiphy (\d+)")
+
+
+def get_phy_name(iface_wifi):
+	"""
+	Requirements: iw
+
+	return -- phy_name
+	"""
+	cmd_call = ["iw", "dev", iface_wifi, "info"]
+	output = subprocess.check_output(cmd_call)
+	match = PATTERN_MODE.search(output)
+	phy_dev = "phy" + match.group(1).decode("UTF-8")
+	#logger.debug(f"Phy dev translation: {iface_wifi}={phy_dev}")
+	return phy_dev
+
+
+def set_wifi_monitor_config(iface_wifi):
+	"""
+	Try various settings to improve monitor mode. Might not always work.
+	Requirements: iw
+
+	Additional manual configs:
+	iw dev | grep -P 'phy|Interface'
+	iw phy phy3 set retry short 1 long 1
+	iw phy phy3 set rts off
+	"""
+	phy_dev = get_phy_name(iface_wifi)
+
+	# Alternative via iwconfig
+	# cmd_call = ["iwconfig", iface, "retry", "0"]
+
+	for cmd_str in [f"iw phy {phy_dev} set retry short 1 long 1", f"iw phy {phy_dev} set rts off"]:
+		try:
+			subprocess.check_call(cmd_str.split(" "))
+		except:
+			# Ignore, depends on driver capabilities
+			pass
+
+
+def set_interface_mode(iface, monitor_active=None, mtu=None, state_active=None):
+	"""
+	Configure an interface, primarily for wifi monitor mode
+	Requirements: ifconfig, iwconfig
+
+	monitor_active -- activate/deactivate monitor mode (only for wlan interfaces)
+	state_active -- set interface state
+	"""
+	initial_state_up = is_interface_up(iface)
+
+	if monitor_active is not None:
+		cmd_call = ["ifconfig", iface, "down"]
+		subprocess.check_call(cmd_call)
+		mode = "monitor" if monitor_active else "managed"
+		cmd_call = ["iwconfig", iface, "mode", mode]
+		subprocess.check_call(cmd_call)
+		set_wifi_monitor_config(iface)
+
+	if type(mtu) is int:
+		cmd_call = ["ifconfig", iface, "mtu", "%d" % mtu]
+		subprocess.check_call(cmd_call)
+
+	if state_active or initial_state_up:
+		cmd_call = ["ifconfig", iface, "up"]
+		subprocess.check_call(cmd_call)
+
+
+def is_interface_present(iface_name):
+	try:
+		netifaces.ifaddresses(iface_name)
+		return True
+	except ValueError:
+		# Raised if interface is not present
+		return False
+
+
+def set_interface_state(iface_name, state_active=True):
+	"""
+	Requirements: ip
+	"""
+	state_str = "up" if state_active else "down"
+	output = subprocess.getoutput("ip link set dev %s %s" % (iface_name, state_str))
+	logger.info(output)
+
+
+PROG_CHANNEL = re.compile(br"Channel ([\d]+) :")
+
+
+def get_available_wlan_channels(iface):
+	"""
+	Requirements: iwlist
+
+	return -- channels as integer list
+	"""
+	cmd_call = ["iwlist", iface, "channel"]
+	output = subprocess.check_output(cmd_call)
+	# logger.debug("iwlist output: %r", output)
+
+	return [int(ch) for ch in PROG_CHANNEL.findall(output)]
+
+
+def set_ethernet_address(iface, ethernet_addr):
+	"""
+	iface -- interface name
+	ethernet_addr -- Ethernet address like "AA:BB:CC:DD:EE:FF"
+	"""
+	initial_state_up = is_interface_up(iface)
+	cmd_call = ["ifconfig", iface, "down"]
+	subprocess.check_call(cmd_call)
+	cmd_call = ["ifconfig", iface, "hw", "ether", ethernet_addr]
+	subprocess.check_call(cmd_call)
+
+	if initial_state_up:
+		cmd_call = ["ifconfig", iface, "up"]
+		subprocess.check_call(cmd_call)
+
+
+MAC_VENDOR = {}
+PROG_MACVENDOR = re.compile(r"([\w\-]{8,8})   \(hex\)\t\t(.+)")
+PROG_MACVENDOR_STRIPPED = re.compile(r"(.{6,6}) (.+)")
+DIR_CURRENT = os.path.dirname(os.path.realpath(__file__)) + "/"
+FILE_OUI = DIR_CURRENT + "oui.txt"
+FILE_OUI_STRIPPED = DIR_CURRENT + "oui_stripped.txt"
+
+
+def _convert():
+	"""
+	Convert oui file
+	return -- True on success, False otherwise
+	"""
+	# logger.debug("loading oui file %s", FILE_OUI)
+
+	try:
+		with open(FILE_OUI, "r", encoding="utf-8") as fh_read:
+			for line in fh_read:
+				hex_vendor = PROG_MACVENDOR.findall(line)
+
+				if len(hex_vendor) > 0:
+					# logger.debug(hex_vendor)
+					MAC_VENDOR[hex_vendor[0][0].replace("-", "")] = hex_vendor[0][1]
+	except:
+		# logger.debug("no oui file present -> nothing to convert")
+		return False
+
+	try:
+		with open(FILE_OUI_STRIPPED, "w", encoding="utf-8") as fh_write:
+			for mac, descr in MAC_VENDOR.items():
+				fh_write.write("%s %s\n" % (mac, descr))
+	except Exception as ex:
+		logger.warning("could not create stripped oui file %r", ex)
+		return False
+	return True
+
+
+def _load_mac_vendor():
+	"""
+	Load oui.txt containing mac->vendor mappings into MAC_VENDOR dictionary.
+	See http://standards.ieee.org/develop/regauth/oui/oui.txt
+	"""
+	if not os.path.isfile(FILE_OUI_STRIPPED):
+		success = False
+
+		if os.path.isfile(FILE_OUI):
+			success = _convert()
+
+		if not success:
+			return
+
+	# logger.debug("loading stripped oui file %s", FILE_OUI_STRIPPED)
+
+	try:
+		with open(FILE_OUI_STRIPPED, "r", encoding="utf-8") as fh_read:
+			for line in fh_read:
+				hex_vendor = PROG_MACVENDOR_STRIPPED.findall(line)
+
+				if len(hex_vendor) > 0:
+					# logger.debug(hex_vendor)
+					MAC_VENDOR[hex_vendor[0][0]] = hex_vendor[0][1]
+		# logger.debug("got %d vendor entries", len(MAC_VENDOR))
+	except Exception as ex:
+		logger.warning("could not load stripped oui file %r", ex)
+
+
+def get_vendor_for_mac(mac):
+	"""
+	mac -- First three bytes of mac address at minimum eg "AA:BB:CC...", "AABBCC..." or
+		byte representation b"\xaa\xbb\xcc\xdd\xee\xff"
+	return -- found vendor string or empty string
+	"""
+	if len(MAC_VENDOR) == 1:
+		return ""
+
+	if len(MAC_VENDOR) == 0:
+		_load_mac_vendor()
+		# Avoid loading next time
+		if len(MAC_VENDOR) == 0:
+			MAC_VENDOR["test"] = "test"
+
+	if type(mac) == bytes:
+		# b"\xaa\xbb\xcc\xdd\xee\xff" -> AA:BB:CC:DD:EE:FF -> AABBCC"
+		mac = pypacker.mac_bytes_to_str(mac)[0:8].replace(":", "")
+	else:
+		# AA:BB:CC -> AABBCC
+		mac = str.upper(mac.replace(":", "")[0:6])
+
+	#logger.debug("searching mac %s", mac)
+	return MAC_VENDOR.get(mac, "")
+
+
+def is_special_mac(mac_str):
+	"""
+	Check if this is a special MAC adress (not a client address). Every MAC not found
+	in the official OUI database is assumed to be non-client.
+
+	mac_str -- Uppercase mac string like "AA:BB:CC[:DD:EE:FF]", first 3 MAC-bytes are enough
+	"""
+	return len(get_vendor_for_mac(mac_str)) == 0
+
+
+def calculate_entropy(elements, granularity_bytes=0, blocksize_bytes=64, log_base=2): # pylint: disable=too-many-locals
+	"""
+	Calcualte entropy of elements
+
+	elements -- List of elements (each of same length) or a string
+	granularity_bytes -- Amount of bytes from which entropy has to be calculated if > 0
+		(Entropy per "column", 2nd dimension)
+	blocksize_bytes -- If elements is a string: size of the block which is splittet in granularity_bytes
+		long strings to calculate the entropy
+	return -- Entropy, Entropies (granularity_bytes > 0) or None on error
+	"""
+	if len(elements) == 0:
+		return None
+
+	if type(elements) != list:
+		# Only strings allowed
+		if type(elements) not in [str, bytes] or granularity_bytes > blocksize_bytes:
+			return None
+		# Get entropy of a string using a blocksize of blocksize_bytes and granularity of granularity_bytes
+		# Example with blocksize_bytes=4, granularity_bytes=1:
+		# "12345678" -> "1234", "5678" -> E("1", "2", "3", "4"), E("5", "6", "7", "8")
+		# Change default parameter
+		if granularity_bytes == 0:
+			granularity_bytes = 1
+		entropies = []
+
+		for off1 in range(0, len(elements), blocksize_bytes):
+			block = elements[off1: off1 + blocksize_bytes]
+			#logger.debug(block)
+			tokens = [block[off2: off2 + granularity_bytes] for off2 in range(0, len(block), granularity_bytes)]
+			#logger.debug(tokens)
+			entropy_block = calculate_entropy(tokens)
+			#logger.debug(entropy_block)
+			entropies.append(entropy_block)
+			#time.sleep(60)
+		return entropies
+
+	if granularity_bytes != 0:
+		# Get Entropy of subsets of bytes of elements: ["1234", "5678"] -> [E("1", "5", ...), ...]
+		element_len = len(elements[0])
+		entropies = []
+
+		for off in range(0, element_len, granularity_bytes):
+			elements_part = []
+
+			for element in elements:
+				elements_part.append(element[off: off + granularity_bytes])
+			entropy_part = calculate_entropy(elements_part)
+			entropies.append(entropy_part)
+		return entropies
+
+	symbol_count = collections.defaultdict(lambda: 0)
+
+	for element in elements:
+		# Faster than using exceptions
+		symbol_count[element] += 1
+
+	#logger.debug(symbol_count)
+	entropy = 0
+	symbols_total = sum(val for _, val in symbol_count.items())
+
+	for _, count in symbol_count.items():
+		p = count / symbols_total
+		entropy += log(p, log_base) * p
+
+	return abs(entropy)
+
+
+def get_mac_for_iface(iface_name):
+	"""
+	return -- MAC address of the interface iface_name
+	Assume MAC address is always retrievable
+	"""
+	try:
+		return netifaces.ifaddresses(iface_name)[netifaces.AF_LINK][0]["addr"]
+	except:
+		return None
+
+
+PROG_MAC_AP = re.compile(br"Access Point: (.+)")
+
+
+def get_mac_of_connected_ap(wifi_interface):
+	"""
+	return -- MAC address of connected AP on wifi interface, otherweise None
+	"""
+	try:
+		cmd_call = ["iwconfig", wifi_interface]
+		output = subprocess.check_output(cmd_call)
+		return PROG_MAC_AP.findall(output)[0].strip()
+	except:
+		return None
+
+
+def get_ip_addressinfo(iface_name, version=4):
+	"""
+	iface_name -- Name of the interface to get the information from
+	version -- 4 for IPv4, 6 for IPv6
+	return -- Adressinfo (ip_address, ip_mask|None, ip_broadcast|None) for the given interface name
+		like ("1.2.3.4", "255.255.255.0", "192.168.0.255")
+	"""
+	version_id = netifaces.AF_INET if version == 4 else netifaces.AF_INET6
+	addr_netmask_broadcast = []
+
+	try:
+		for addressinfo in netifaces.ifaddresses(iface_name)[version_id]:
+			# Honor no broadcast for IPv6
+			addr_netmask_broadcast.append(
+				(addressinfo.get("addr", None),
+				addressinfo.get("netmask", None),
+				addressinfo.get("broadcast", None))
+			)
+	except Exception as ex:
+		logger.exception(ex)
+
+	return addr_netmask_broadcast
+
+
+def nwmask_to_cidr(nmask):
+	"""
+	nmask -- An IPv4 network mask like "255.255.255.0"
+	return -- The amount of network bits in CIDR format like 24
+	"""
+	return ipaddress.IPv4Network("1.2.3.4/%s" % nmask, strict=False).prefixlen
+
+
+def get_gwip_for_iface(iface_name, version=4):
+	"""
+	iface_name -- Name of the interface to get the information from
+	version -- 4 for IPv4, 6 for IPv6
+	return -- IP address of the default gateway like "1.2.3.4" for interface iface_name or None
+	"""
+	version_id = netifaces.AF_INET if version == 4 else netifaces.AF_INET6
+	gws_ip = netifaces.gateways().get(version_id, None)
+
+	if gws_ip is None:
+		return None
+	gw_result = None
+
+	for gw_info in gws_ip:
+		if iface_name in gw_info:
+			gw_result = gw_info[0]
+			break
+	return gw_result
+
+
+def get_arp_cache_entry(ipaddr, version=4):
+	"""
+	return -- MAC address for IP addess like "1.2.3.4"
+	"""
+	mac = None
+
+	if version == 4:
+		pattern_mac = re.compile("([0-9A-Fa-f]{2}[:]){5}([0-9A-Fa-f]{2})")
+
+		with open("/proc/net/arp", "r", encoding="utf-8") as fd:
+			for line in fd:
+				if line.startswith(ipaddr + " "):
+					mac = pattern_mac.search(line).group(0)
+					break
+	else:
+		cmd_call = "ip -6 neigh".split(" ")
+		lines = subprocess.check_output(cmd_call).decode("UTF-8").split("\n")
+		prefix = "lladdr "
+		pattern_mac = re.compile(prefix + "([0-9A-Fa-f]{2}[:]){5}([0-9A-Fa-f]{2})")
+
+		for line in lines:
+			if line.startswith(ipaddr + " "):
+				mac = pattern_mac.search(line).group(0)
+				break
+	return mac
+
+
+def add_arp_entry(ip_address, mac_address, interface_name):
+	"""
+	Add an arp entry using linux "arp" command.
+	"""
+	cmd_call = ["arp", "-s", ip_address, "-i", interface_name, mac_address]
+	subprocess.check_call(cmd_call)
+
+
+def flush_arp_cache():
+	"""
+	Remove all arp entries from cache using linux "ip" command.
+	"""
+	cmd_call = ["ip", "-s", "neigh", "flush", "all"]
+	subprocess.check_call(cmd_call)
+"""
+Displays basic information for web requests/responses in a connection.
+"""
+
+
+class DshellPlugin(HTTPPlugin):
+    def __init__(self):
+        super().__init__(
+            name="web",
+            author="bg,twp",
+            description="Displays basic information for web requests/responses in a connection",
+            bpf="tcp and (port 80 or port 8080 or port 8000)",
+            output=AlertOutput(label=__name__),
+            optiondict={
+                "md5": {"action": "store_true",
+                        "help": "Calculate MD5 for each response."}
+            },
+        )
+
+    def http_handler(self, conn, request, response):
+     
+        if request:
+            if request.method=="":
+                # It's impossible to have a properly formed HTTP request without a method
+                # indicating, the httpplugin is calling http_handler without a full object
+                return None
+            # Collect basics about the request, if available
+            method = request.method
+            host = request.headers.get("host", "")
+            uri = request.uri
+#            useragent = request.headers.get("user-agent", None)
+#            referer = request.headers.get("referer", None)
+            version = request.version
+        else:
+            method = "(no request)"
+            host = ""
+            uri = ""
+            version = ""
+
+        if response:
+            if response.status == "" and response.reason == "":
+                # Another indication of improperly parsed HTTP object in httpplugin
+                return None
+            # Collect basics about the response, if available
+            status = response.status
+            reason = response.reason
+            if self.md5:
+                hash = "(md5: {})".format(md5(response.body).hexdigest())
+            else:
+                hash = ""
+        else:
+            status = "(no response)"
+            reason = ""
+            hash = ""
+
+        data = "{} {}{} HTTP/{} {} {} {}".format(method,
+                                                 host,
+                                                 uri,
+                                                 version,
+                                                 status,
+                                                 reason,
+                                                 hash)
+        if not request:
+            self.write(data, method=method, host=host, uri=uri, version=version, status=status, reason=reason, hash=hash, **response.blob.info())
+        elif not response:
+            self.write(data, method=method, uri=uri, version=version, status=status, reason=reason, hash=hash, **request.headers, **request.blob.info())
+        else:
+        	self.write(data, method=method, uri=uri, version=version, status=status, reason=reason, hash=hash, request_headers=request.headers, response_headers=response.headers, **request.blob.info())
+        return conn, request, response
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+"""Virtual Router Redundancy Protocol."""
+
+
+class VRRP(pypacker.Packet):
+	__hdr__ = (
+		("vtype", "B", 0x21),
+		("vrid", "B", 0),
+		("priority", "B", 0),
+		("count", "B", 0),
+		("atype", "B", 0),
+		("advtime", "B", 0),
+		("sum", "H", 0, FIELD_FLAG_AUTOUPDATE),
+	)
+
+	def __get_v(self):
+		return self.vtype >> 4
+
+	def __set_v(self, v):
+		self.vtype = (self.vtype & ~0xF) | (v << 4)
+	v = property(__get_v, __set_v)
+
+	def __get_type(self):
+		return self.vtype & 0xF
+
+	def __set_type(self, v):
+		self.vtype = (self.vtype & ~0xF0) | (v & 0xF)
+	type = property(__get_type, __set_type)
+
+	def _update_fields(self):
+		if self.sum_au_active and self._changed():
+			# logger.debug(">>> IP: calculating sum")
+			# reset checksum for recalculation,  mark as changed / clear cache
+			self.sum = 0
+			# logger.debug(">>> IP: bytes for sum: %s" % self.header_bytes)
+			self.sum = checksum.in_cksum(pypacker.Packet.bin(self, update_auto_fields=True))
+"""
+============================
+WebServices Client API
+============================
+
+This class provides a client API for all the GeoIP2 web services. The web
+services are Country, City Plus, and Insights. Each service returns a
+different set of data about an IP address, with Country returning the least
+data and Insights the most.
+
+Each service is represented by a different model class, and these model
+classes in turn contain multiple record classes. The record classes have
+attributes which contain data about the IP address.
+
+If the service does not return a particular piece of data for an IP address,
+the associated attribute is not populated.
+
+The service may not return any information for an entire record, in which
+case all of the attributes for that record class will be empty.
+
+SSL
+---
+
+Requests to the web service are always made with SSL.
+
+"""
+
+
+_AIOHTTP_UA = (
+    f"GeoIP2-Python-Client/{geoip2.__version__} {aiohttp.http.SERVER_SOFTWARE}"
+)
+
+_REQUEST_UA = (
+    f"GeoIP2-Python-Client/{geoip2.__version__} {requests.utils.default_user_agent()}"
+)
+
+
+class BaseClient:  # pylint: disable=missing-class-docstring, too-few-public-methods
+    _account_id: str
+    _host: str
+    _license_key: str
+    _locales: List[str]
+    _timeout: float
+
+    def __init__(
+        self,
+        account_id: int,
+        license_key: str,
+        host: str,
+        locales: Optional[List[str]],
+        timeout: float,
+    ) -> None:
+        """Construct a Client."""
+        # pylint: disable=too-many-arguments
+        if locales is None:
+            locales = ["en"]
+
+        self._locales = locales
+        # requests 2.12.2 requires that the username passed to auth be bytes
+        # or a string, with the former being preferred.
+        self._account_id = (
+            account_id if isinstance(account_id, bytes) else str(account_id)
+        )
+        self._license_key = license_key
+        self._base_uri = f"https://{host}/geoip/v2.1"
+        self._timeout = timeout
+
+    def _uri(self, path: str, ip_address: IPAddress) -> str:
+        if ip_address != "me":
+            ip_address = ipaddress.ip_address(ip_address)
+        return "/".join([self._base_uri, path, str(ip_address)])
+
+    @staticmethod
+    def _handle_success(body: str, uri: str) -> Any:
+        try:
+            return json.loads(body)
+        except ValueError as ex:
+            raise GeoIP2Error(
+                f"Received a 200 response for {uri}"
+                " but could not decode the response as "
+                "JSON: " + ", ".join(ex.args),
+                200,
+                uri,
+            ) from ex
+
+    def _exception_for_error(
+        self, status: int, content_type: str, body: str, uri: str
+    ) -> GeoIP2Error:
+        if 400 <= status < 500:
+            return self._exception_for_4xx_status(status, content_type, body, uri)
+        if 500 <= status < 600:
+            return self._exception_for_5xx_status(status, uri, body)
+        return self._exception_for_non_200_status(status, uri, body)
+
+    def _exception_for_4xx_status(
+        self, status: int, content_type: str, body: str, uri: str
+    ) -> GeoIP2Error:
+        if not body:
+            return HTTPError(
+                f"Received a {status} error for {uri} with no body.",
+                status,
+                uri,
+                body,
+            )
+        if content_type.find("json") == -1:
+            return HTTPError(
+                f"Received a {status} for {uri} with the following body: {body}",
+                status,
+                uri,
+                body,
+            )
+        try:
+            decoded_body = json.loads(body)
+        except ValueError as ex:
+            return HTTPError(
+                f"Received a {status} error for {uri} but it did not include "
+                + "the expected JSON body: "
+                + ", ".join(ex.args),
+                status,
+                uri,
+                body,
+            )
+
+        if "code" in decoded_body and "error" in decoded_body:
+            return self._exception_for_web_service_error(
+                decoded_body.get("error"), decoded_body.get("code"), status, uri
+            )
+        return HTTPError(
+            "Response contains JSON but it does not specify code or error keys",
+            status,
+            uri,
+            body,
+        )
+
+    @staticmethod
+    def _exception_for_web_service_error(
+        message: str, code: str, status: int, uri: str
+    ) -> Union[
+        AuthenticationError,
+        AddressNotFoundError,
+        PermissionRequiredError,
+        OutOfQueriesError,
+        InvalidRequestError,
+    ]:
+        if code in ("IP_ADDRESS_NOT_FOUND", "IP_ADDRESS_RESERVED"):
+            return AddressNotFoundError(message)
+        if code in (
+            "ACCOUNT_ID_REQUIRED",
+            "ACCOUNT_ID_UNKNOWN",
+            "AUTHORIZATION_INVALID",
+            "LICENSE_KEY_REQUIRED",
+            "USER_ID_REQUIRED",
+            "USER_ID_UNKNOWN",
+        ):
+            return AuthenticationError(message)
+        if code in ("INSUFFICIENT_FUNDS", "OUT_OF_QUERIES"):
+            return OutOfQueriesError(message)
+        if code == "PERMISSION_REQUIRED":
+            return PermissionRequiredError(message)
+
+        return InvalidRequestError(message, code, status, uri)
+
+    @staticmethod
+    def _exception_for_5xx_status(
+        status: int, uri: str, body: Optional[str]
+    ) -> HTTPError:
+        return HTTPError(
+            f"Received a server error ({status}) for {uri}",
+            status,
+            uri,
+            body,
+        )
+
+    @staticmethod
+    def _exception_for_non_200_status(
+        status: int, uri: str, body: Optional[str]
+    ) -> HTTPError:
+        return HTTPError(
+            f"Received a very surprising HTTP status ({status}) for {uri}",
+            status,
+            uri,
+            body,
+        )
+
+
+class AsyncClient(BaseClient):
+    """An async GeoIP2 client.
+
+    It accepts the following required arguments:
+
+    :param account_id: Your MaxMind account ID.
+    :param license_key: Your MaxMind license key.
+
+    Go to https://www.maxmind.com/en/my_license_key to see your MaxMind
+    account ID and license key.
+
+    The following keyword arguments are also accepted:
+
+    :param host: The hostname to make a request against. This defaults to
+      "geoip.maxmind.com". To use the GeoLite2 web service instead of the
+      GeoIP2 web service, set this to "geolite.info". To use the Sandbox
+      GeoIP2 web service instead of the production GeoIP2 web service, set
+      this to "sandbox.maxmind.com". The sandbox allows you to experiment
+      with the API without affecting your production data.
+    :param locales: This is list of locale codes. This argument will be
+      passed on to record classes to use when their name properties are
+      called. The default value is ['en'].
+
+      The order of the locales is significant. When a record class has
+      multiple names (country, city, etc.), its name property will return
+      the name in the first locale that has one.
+
+      Note that the only locale which is always present in the GeoIP2
+      data is "en". If you do not include this locale, the name property
+      may end up returning None even when the record has an English name.
+
+      Currently, the valid locale codes are:
+
+      * de -- German
+      * en -- English names may still include accented characters if that is
+        the accepted spelling in English. In other words, English does not
+        mean ASCII.
+      * es -- Spanish
+      * fr -- French
+      * ja -- Japanese
+      * pt-BR -- Brazilian Portuguese
+      * ru -- Russian
+      * zh-CN -- Simplified Chinese.
+    :param timeout: The timeout in seconds to use when waiting on the request.
+      This sets both the connect timeout and the read timeout. The default is
+      60.
+    :param proxy: The URL of an HTTP proxy to use. It may optionally include
+      a basic auth username and password, e.g.,
+      ``http://username:password@host:port``.
+
+    """
+
+    _existing_session: aiohttp.ClientSession
+    _proxy: Optional[str]
+
+    def __init__(  # pylint: disable=too-many-arguments
+        self,
+        account_id: int,
+        license_key: str,
+        host: str = "geoip.maxmind.com",
+        locales: Optional[List[str]] = None,
+        timeout: float = 60,
+        proxy: Optional[str] = None,
+    ) -> None:
+        super().__init__(
+            account_id,
+            license_key,
+            host,
+            locales,
+            timeout,
+        )
+        self._proxy = proxy
+
+    async def city(self, ip_address: IPAddress = "me") -> City:
+        """Call City Plus endpoint with the specified IP.
+
+        :param ip_address: IPv4 or IPv6 address as a string. If no
+           address is provided, the address that the web service is
+           called from will be used.
+
+        :returns: :py:class:`geoip2.models.City` object
+
+        """
+        return cast(
+            City, await self._response_for("city", geoip2.models.City, ip_address)
+        )
+
+    async def country(self, ip_address: IPAddress = "me") -> Country:
+        """Call the GeoIP2 Country endpoint with the specified IP.
+
+        :param ip_address: IPv4 or IPv6 address as a string. If no address
+          is provided, the address that the web service is called from will
+          be used.
+
+        :returns: :py:class:`geoip2.models.Country` object
+
+        """
+        return cast(
+            Country,
+            await self._response_for("country", geoip2.models.Country, ip_address),
+        )
+
+    async def insights(self, ip_address: IPAddress = "me") -> Insights:
+        """Call the Insights endpoint with the specified IP.
+
+        Insights is only supported by the GeoIP2 web service. The GeoLite2 web
+        service does not support it.
+
+        :param ip_address: IPv4 or IPv6 address as a string. If no address
+          is provided, the address that the web service is called from will
+          be used.
+
+        :returns: :py:class:`geoip2.models.Insights` object
+
+        """
+        return cast(
+            Insights,
+            await self._response_for("insights", geoip2.models.Insights, ip_address),
+        )
+
+    async def _session(self) -> aiohttp.ClientSession:
+        if not hasattr(self, "_existing_session"):
+            self._existing_session = aiohttp.ClientSession(
+                auth=aiohttp.BasicAuth(self._account_id, self._license_key),
+                headers={"Accept": "application/json", "User-Agent": _AIOHTTP_UA},
+                timeout=aiohttp.ClientTimeout(total=self._timeout),
+            )
+
+        return self._existing_session
+
+    async def _response_for(
+        self,
+        path: str,
+        model_class: Union[Type[Insights], Type[City], Type[Country]],
+        ip_address: IPAddress,
+    ) -> Union[Country, City, Insights]:
+        uri = self._uri(path, ip_address)
+        session = await self._session()
+        async with await session.get(uri, proxy=self._proxy) as response:
+            status = response.status
+            content_type = response.content_type
+            body = await response.text()
+            if status != 200:
+                raise self._exception_for_error(status, content_type, body, uri)
+            decoded_body = self._handle_success(body, uri)
+            return model_class(decoded_body, locales=self._locales)
+
+    async def close(self):
+        """Close underlying session
+
+        This will close the session and any associated connections.
+        """
+        if hasattr(self, "_existing_session"):
+            await self._existing_session.close()
+
+    async def __aenter__(self) -> "AsyncClient":
+        return self
+
+    async def __aexit__(self, exc_type: None, exc_value: None, traceback: None) -> None:
+        await self.close()
+
+
+class Client(BaseClient):
+    """A synchronous GeoIP2 client.
+
+    It accepts the following required arguments:
+
+    :param account_id: Your MaxMind account ID.
+    :param license_key: Your MaxMind license key.
+
+    Go to https://www.maxmind.com/en/my_license_key to see your MaxMind
+    account ID and license key.
+
+    The following keyword arguments are also accepted:
+
+    :param host: The hostname to make a request against. This defaults to
+      "geoip.maxmind.com". To use the GeoLite2 web service instead of the
+      GeoIP2 web service, set this to "geolite.info". To use the Sandbox
+      GeoIP2 web service instead of the production GeoIP2 web service, set
+      this to "sandbox.maxmind.com". The sandbox allows you to experiment
+      with the API without affecting your production data.
+    :param locales: This is list of locale codes. This argument will be
+      passed on to record classes to use when their name properties are
+      called. The default value is ['en'].
+
+      The order of the locales is significant. When a record class has
+      multiple names (country, city, etc.), its name property will return
+      the name in the first locale that has one.
+
+      Note that the only locale which is always present in the GeoIP2
+      data is "en". If you do not include this locale, the name property
+      may end up returning None even when the record has an English name.
+
+      Currently, the valid locale codes are:
+
+      * de -- German
+      * en -- English names may still include accented characters if that is
+        the accepted spelling in English. In other words, English does not
+        mean ASCII.
+      * es -- Spanish
+      * fr -- French
+      * ja -- Japanese
+      * pt-BR -- Brazilian Portuguese
+      * ru -- Russian
+      * zh-CN -- Simplified Chinese.
+    :param timeout: The timeout in seconds to use when waiting on the request.
+      This sets both the connect timeout and the read timeout. The default is
+      60.
+    :param proxy: The URL of an HTTP proxy to use. It may optionally include
+      a basic auth username and password, e.g.,
+      ``http://username:password@host:port``.
+
+
+    """
+
+    _session: requests.Session
+    _proxies: Optional[Dict[str, str]]
+
+    def __init__(  # pylint: disable=too-many-arguments
+        self,
+        account_id: int,
+        license_key: str,
+        host: str = "geoip.maxmind.com",
+        locales: Optional[List[str]] = None,
+        timeout: float = 60,
+        proxy: Optional[str] = None,
+    ) -> None:
+        super().__init__(account_id, license_key, host, locales, timeout)
+        self._session = requests.Session()
+        self._session.auth = (self._account_id, self._license_key)
+        self._session.headers["Accept"] = "application/json"
+        self._session.headers["User-Agent"] = _REQUEST_UA
+        if proxy is None:
+            self._proxies = None
+        else:
+            self._proxies = {"https": proxy}
+
+    def city(self, ip_address: IPAddress = "me") -> City:
+        """Call City Plus endpoint with the specified IP.
+
+        :param ip_address: IPv4 or IPv6 address as a string. If no
+           address is provided, the address that the web service is
+           called from will be used.
+
+        :returns: :py:class:`geoip2.models.City` object
+
+        """
+        return cast(City, self._response_for("city", geoip2.models.City, ip_address))
+
+    def country(self, ip_address: IPAddress = "me") -> Country:
+        """Call the GeoIP2 Country endpoint with the specified IP.
+
+        :param ip_address: IPv4 or IPv6 address as a string. If no address
+          is provided, the address that the web service is called from will
+          be used.
+
+        :returns: :py:class:`geoip2.models.Country` object
+
+        """
+        return cast(
+            Country, self._response_for("country", geoip2.models.Country, ip_address)
+        )
+
+    def insights(self, ip_address: IPAddress = "me") -> Insights:
+        """Call the Insights endpoint with the specified IP.
+
+        Insights is only supported by the GeoIP2 web service. The GeoLite2 web
+        service does not support it.
+
+        :param ip_address: IPv4 or IPv6 address as a string. If no address
+          is provided, the address that the web service is called from will
+          be used.
+
+        :returns: :py:class:`geoip2.models.Insights` object
+
+        """
+        return cast(
+            Insights, self._response_for("insights", geoip2.models.Insights, ip_address)
+        )
+
+    def _response_for(
+        self,
+        path: str,
+        model_class: Union[Type[Insights], Type[City], Type[Country]],
+        ip_address: IPAddress,
+    ) -> Union[Country, City, Insights]:
+        uri = self._uri(path, ip_address)
+        response = self._session.get(uri, proxies=self._proxies, timeout=self._timeout)
+        status = response.status_code
+        content_type = response.headers["Content-Type"]
+        body = response.text
+        if status != 200:
+            raise self._exception_for_error(status, content_type, body, uri)
+        decoded_body = self._handle_success(body, uri)
+        return model_class(decoded_body, locales=self._locales)
+
+    def close(self):
+        """Close underlying session
+
+        This will close the session and any associated connections.
+        """
+        self._session.close()
+
+    def __enter__(self) -> "Client":
+        return self
+
+    def __exit__(self, exc_type: None, exc_value: None, traceback: None) -> None:
+        self.close()
+
+"""
+pyOpenSSL - A simple wrapper around the OpenSSL library
+"""
+
+__all__ = [
+    "__author__",
+    "__copyright__",
+    "__email__",
+    "__license__",
+    "__summary__",
+    "__title__",
+    "__uri__",
+    "__version__",
+]
+
+__version__ = "24.2.1"
+
+__title__ = "pyOpenSSL"
+__uri__ = "https://pyopenssl.org/"
+__summary__ = "Python wrapper module around the OpenSSL library"
+__author__ = "The pyOpenSSL developers"
+__email__ = "cryptography-dev@python.org"
+__license__ = "Apache License, Version 2.0"
+__copyright__ = f"Copyright 2001-2024 {__author__}"
+"""
+Shows 802.11 information for individual packets.
+"""
+
+
+# Create a dictionary of string representations of frame types
+TYPE_KEYS = {
+    ieee80211.MGMT_TYPE: "MGMT",
+    ieee80211.CTL_TYPE: "CTRL",
+    ieee80211.DATA_TYPE: "DATA"
+}
+
+# Create a dictionary of subtype keys from constants defined in ieee80211
+# Its keys will be tuple pairs of (TYPE, SUBTYPE)
+SUBTYPE_KEYS = dict()
+# Management frame subtypes
+SUBTYPE_KEYS.update(dict(((ieee80211.MGMT_TYPE, v), k[2:]) for k, v in ieee80211.__dict__.items() if type(v) == int and k.startswith("M_")))
+# Control frame subtypes
+SUBTYPE_KEYS.update(dict(((ieee80211.CTL_TYPE, v), k[2:]) for k, v in ieee80211.__dict__.items() if type(v) == int and k.startswith("C_")))
+# Data frame subtypes
+SUBTYPE_KEYS.update(dict(((ieee80211.DATA_TYPE, v), k[2:]) for k, v in ieee80211.__dict__.items() if type(v) == int and k.startswith("D_")))
+
+class DshellPlugin(dshell.core.PacketPlugin):
+
+    OUTPUT_FORMAT = "[%(plugin)s] %(dt)s [%(ftype)s] [%(encrypted)s] [%(fsubtype)s] %(bodybytes)r %(retry)s\n"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            name="802.11",
+            description="Show 802.11 packet information",
+            author="dev195",
+            bpf="wlan type mgt or wlan type ctl or wlan type data",
+            output=Output(label=__name__, format=self.OUTPUT_FORMAT),
+            optiondict={
+                "ignore_mgt": {"action": "store_true", "help": "Ignore management frames"},
+                "ignore_ctl": {"action": "store_true", "help": "Ignore control frames"},
+                "ignore_data": {"action": "store_true", "help": "Ignore data frames"},
+                "ignore_beacon": {"action": "store_true", "help": "Ignore beacons"},
+            },
+            longdescription="""
+Shows basic information for 802.11 packets, including:
+ - Frame type
+ - Encryption
+ - Frame subtype
+ - Data sample
+"""
+        )
+
+    def handle_plugin_options(self):
+        "Update the BPF based on 'ignore' flags"
+        # NOTE: This function is naturally called in decode.py
+        bpf_pieces = []
+        if not self.ignore_mgt:
+            if self.ignore_beacon:
+                bpf_pieces.append("(wlan type mgt and not wlan type mgt subtype beacon)")
+            else:
+                bpf_pieces.append("wlan type mgt")
+        if not self.ignore_ctl:
+            bpf_pieces.append("wlan type ctl")
+        if not self.ignore_data:
+            bpf_pieces.append("wlan type data")
+        self.bpf = " or ".join(bpf_pieces)
+
+    def packet_handler(self, pkt):
+        try:
+            frame = pkt.pkt.ieee80211
+        except AttributeError:
+            frame = pkt.pkt
+        encrypted = "encrypted" if frame.protected else "         "
+        frame_type = TYPE_KEYS.get(frame.type, '----')
+        frame_subtype = SUBTYPE_KEYS.get((frame.type, frame.subtype), "")
+        retry = "[resent]" if frame.retry else ""
+        bodybytes = frame.body_bytes[:50]
+
+        self.write(
+            encrypted=encrypted,
+            ftype=frame_type,
+            fsubtype=frame_subtype,
+            retry=retry,
+            bodybytes=bodybytes,
+            **pkt.info()
+        )
+
+        return pkt
+"""
+Shows 802.11 wireless beacons and related information
+"""
+
+
+class DshellPlugin(dshell.core.PacketPlugin):
+
+    OUTPUT_FORMAT = "[%(plugin)s]\t%(dt)s\tInterval: %(interval)s TU,\tSSID: %(ssid)s\t%(count)s\n"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            name="Wi-fi Beacons",
+            description="Show SSIDs of 802.11 wireless beacons",
+            author="dev195",
+            bpf="wlan type mgt subtype beacon",
+            output=Output(label=__name__, format=self.OUTPUT_FORMAT),
+            optiondict={
+                "group": {"action": "store_true", "help": "Group beacons together with counts"},
+            }
+        )
+        self.group_counts = defaultdict(int)
+        self.group_times  = defaultdict(datetime.now)
+
+    def packet_handler(self, pkt):
+        # Extract 802.11 frame from packet
+        try:
+            frame = pkt.pkt.ieee80211
+        except AttributeError:
+            frame = pkt.pkt
+
+        # Confirm that packet is, in fact, a beacon
+        if not frame.is_beacon():
+            return
+
+        # Extract SSID from frame
+        beacon = frame.beacon
+        ssid = ""
+        try:
+            for param in beacon.params:
+                # Find the SSID parameter
+                if param.id == 0:
+                    ssid = param.body_bytes.decode("utf-8")
+                    break
+        except IndexError:
+            # Sometimes pypacker fails to parse a packet
+            return
+
+        if self.group:
+            self.group_counts[(ssid, beacon.interval)] += 1
+            self.group_times[(ssid, beacon.interval)]  = pkt.ts
+        else:
+            self.write(ssid=ssid, interval=beacon.interval, **pkt.info())
+
+        return pkt
+
+    def postfile(self):
+        if self.group:
+            for key, val in self.group_counts.items():
+                ssid, interval = key
+                dt = self.group_times[key]
+                self.write(ssid=ssid, interval=interval, plugin=self.name, dt=dt, count=val)
+"""
+XOR the data in every packet with a user-provided key. Multiple keys can be used
+for different data directions.
+"""
+
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+    def __init__(self):
+        super().__init__(
+            name="xor",
+            description="XOR every packet with a given key",
+            output=Output(label=__name__),
+            bpf="tcp",
+            author="twp,dev195",
+            optiondict={
+                "key": {
+                    "type": str,
+                    "default": "0xff",
+                    "help": "xor key in hex format (default: 0xff)",
+                    "metavar": "0xHH"
+                },
+                "cskey": {
+                    "type": str,
+                    "default": None,
+                    "help": "xor key to use for client-to-server data (default: None)",
+                    "metavar": "0xHH"
+                },
+                "sckey": {
+                    "type": str,
+                    "default": None,
+                    "help": "xor key to use for server-to-client data (default: None)",
+                    "metavar": "0xHH"
+                },
+                "resync": {
+                    "action": "store_true",
+                    "help": "resync the key index if the key is seen in the data"
+                }
+            }
+        )
+
+    def __make_key(self, key):
+        "Convert a user-provided key into a standard format plugin can use."
+        if key.startswith("0x") or key.startswith("\\x"):
+            # Convert a hex key
+            oldkey = key[2:]
+            newkey = b''
+            for i in range(0, len(oldkey), 2):
+                try:
+                    newkey += struct.pack('B', int(oldkey[i:i + 2], 16))
+                except ValueError as e:
+                    self.logger.warning("Error converting hex. Will treat as raw string. - {!s}".format(e))
+                    newkey = key.encode('ascii')
+                    break
+        else:
+            try:
+                # See if it's a numeric key
+                newkey = int(key)
+                newkey = struct.pack('I', newkey)
+            except ValueError:
+                # otherwise, convert string key to bytes as it is
+                newkey = key.encode('ascii')
+        self.logger.debug("__make_key: {!r} -> {!r}".format(key, newkey))
+        return newkey
+
+    def premodule(self):
+        self.key = self.__make_key(self.key)
+        if self.cskey:
+            self.cskey = self.__make_key(self.cskey)
+        if self.sckey:
+            self.sckey = self.__make_key(self.sckey)
+
+    def connection_handler(self, conn):
+        for blob in conn.blobs:
+            key_index = 0
+            if self.sckey and blob.direction == 'sc':
+                key = self.sckey
+            elif self.cskey and blob.direction == 'cs':
+                key = self.cskey
+            else:
+                key = self.key
+            for pkt in blob.packets:
+                # grab the data from the TCP layer and down
+                data = pkt.data
+                # data = pkt.pkt.upper_layer.upper_layer.body_bytes
+                self.logger.debug("Original:\n{}".format(dshell.util.hex_plus_ascii(data)))
+                # XOR the data and store it in new_data
+                new_data = b''
+                for i in range(len(data)):
+                    if self.resync and data[i:i + len(key)] == key:
+                        key_index = 0
+                    x = data[i] ^ key[key_index]
+                    new_data += struct.pack('B', x)
+                    key_index = (key_index + 1) % len(key)
+                pkt.data = new_data
+                # # rebuild the packet by adding together each of the layers
+                # pkt.rawpkt = pkt.pkt.header_bytes + pkt.pkt.upper_layer.header_bytes + pkt.pkt.upper_layer.upper_layer.header_bytes + new_data
+                self.logger.debug("New:\n{}".format(dshell.util.hex_plus_ascii(new_data)))
+        return conn
+
+####################################################################
+#
+#
+#           DSHELL U THROUGH X SCRIPTS END
+#
+###################################################################
