@@ -5709,3 +5709,2161 @@ if __name__ == "__main__":
     print(DshellPlugin())
 
 
+
+####################################################################
+#
+#
+#           DSHELL E THROUGH F SCRIPTS END
+#
+#
+###################################################################
+
+
+####################################################################
+#
+#
+#           DSHELL H SCRIPTS START
+#
+#
+###################################################################
+
+
+"""Cisco Hot Standby Router Protocol."""
+
+
+# Opcodes
+HELLO = 0
+COUP = 1
+RESIGN = 2
+
+# States
+INITIAL = 0x00
+LEARN = 0x01
+LISTEN = 0x02
+SPEAK = 0x04
+STANDBY = 0x08
+ACTIVE = 0x10
+
+
+class HSRP(pypacker.Packet):
+	__hdr__ = (
+		("version", "B", 0),
+		("opcode", "B", 0),
+		("state", "B", 0),
+		("hello", "B", 0),
+		("hold", "B", 0),
+		("priority", "B", 0),
+		("group", "B", 0),
+		("rsvd", "B", 0),
+		("auth", "8s", b"cisco"),
+		("vip", "4s", b"")
+	)
+"""
+Generates packet or reconstructed stream output as a HTML page.
+
+Based on colorout module originally written by amm
+"""
+
+from dshell.output.output import Output
+import dshell.util
+import dshell.core
+from xml.sax.saxutils import escape
+
+class HTMLOutput(Output):
+    _DESCRIPTION = "HTML format output"
+    _PACKET_FORMAT = """<h1>Packet %(counter)s (%(protocol)s)</h1><h2>Start: %(ts)s
+%(sip)s:%(sport)s -> %(dip)s:%(dport)s (%(bytes)s bytes)
+</h2>
+%(data)s
+"""
+    _CONNECTION_FORMAT = """<h1>Connection %(counter)s (%(protocol)s)</h1><h2>Start: %(starttime)s
+End: %(endtime)s
+%(clientip)s:%(clientport)s -> %(serverip)s:%(serverport)s (%(clientbytes)s bytes)
+%(serverip)s:%(serverport)s -> %(clientip)s:%(clientport)s (%(serverbytes)s bytes)
+</h2>
+%(data)s
+"""
+    _DEFAULT_FORMAT = _PACKET_FORMAT
+    _DEFAULT_DELIM = "<br />"
+
+    _HTML_HEADER = """
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <title>Dshell Output</title>
+    <style>
+        body {
+            font-family: monospace;
+            font-size: 10pt;
+            white-space: pre;
+        }
+        h1 {
+            font-family: helvetica;
+            font-size: 13pt;
+            font-weight: bolder;
+            white-space: pre;
+        }
+        h2 {
+            font-family: helvetica;
+            font-size: 12pt;
+            font-weight: bolder;
+            margin: 0 0;
+            white-space: pre;
+        }
+    </style>
+</head>
+<body>
+"""
+
+    _HTML_FOOTER = """
+</body>
+</html>
+"""
+
+    def __init__(self, *args, **kwargs):
+        "Can be called with an optional 'hex' argument to display output in hex"
+        super().__init__(*args, **kwargs)
+        self.counter = 1
+        self.colors = {
+            'cs': 'red',   # client-to-server is red
+            'sc': 'green',   # server-to-client is green
+            '--': 'blue',   # everything else is blue
+        }
+        self.hexmode = kwargs.get('hex', False)
+        self.format_is_set = False
+
+    def setup(self):
+        # activate color blind friendly mode
+        if self.cbf:
+            self.colors['cs'] = 'gold'   # client-to-server is gold (darker yellow)
+            self.colors['sc'] = 'seagreen'   # server-to-client is sea green (lighter green)
+        self.fh.write(self._HTML_HEADER)
+
+    def write(self, *args, **kwargs):
+        if not self.format_is_set:
+            if 'clientip' in kwargs:
+                self.set_format(self._CONNECTION_FORMAT)
+            else:
+                self.set_format(self._PACKET_FORMAT)
+            self.format_is_set = True
+
+        # a template string for data output
+        colorformat = '<span style="color:%s;">%s</span>'
+
+        # Iterate over the args and try to parse out any raw data strings
+        rawdata = []
+        for arg in args:
+            if type(arg) == dshell.core.Blob:
+                if arg.data:
+                    rawdata.append((arg.data, arg.direction))
+            elif type(arg) == dshell.core.Connection:
+                for blob in arg.blobs:
+                    if blob.data:
+                        rawdata.append((blob.data, blob.direction))
+            elif type(arg) == dshell.core.Packet:
+                rawdata.append((arg.pkt.body_bytes, kwargs.get('direction', '--')))
+            elif type(arg) == tuple:
+                rawdata.append(arg)
+            else:
+                rawdata.append((arg, kwargs.get('direction', '--')))
+
+        # Clean up the rawdata into something more presentable
+        if self.hexmode:
+            cleanup_func = dshell.util.hex_plus_ascii
+        else:
+            cleanup_func = dshell.util.printable_text
+        for k, v in enumerate(rawdata):
+            newdata = cleanup_func(v[0])
+            newdata = escape(newdata)
+            rawdata[k] = (newdata, v[1])
+
+        # Convert the raw data strings into color-coded output
+        data = []
+        for arg in rawdata:
+            datastring = colorformat % (self.colors.get(arg[1], ''), arg[0])
+            data.append(datastring)
+
+        super().write(counter=self.counter, *data, **kwargs)
+        self.counter += 1
+
+    def close(self):
+        self.fh.write(self._HTML_FOOTER)
+        Output.close(self)
+
+obj = HTMLOutput
+
+
+"""
+Hypertext Transfer Protocol.
+"""
+import re
+import logging
+
+from pypacker import pypacker, triggerlist
+
+logger = logging.getLogger("pypacker")
+
+# [Method] [Path] HTTP...\r\n
+# key: value\r\n
+# \r\n
+# [body]
+PROG_STARTLINE			= re.compile(rb"[\w\./]{3,10} +[\w\./]{1,400} +[\w\./]{1,20}.+")
+PROG_STARTLINE_MATCH		= PROG_STARTLINE.match
+PROG_SPLIT_HEADBODY		= re.compile(b"\r\n\r\n")
+PROG_SPLIT_HEADBODY_SPLIT	= PROG_SPLIT_HEADBODY.split
+PROG_SPLIT_HEADER		= re.compile(b"\r\n")
+PROG_SPLIT_HEADER_SPLIT		= PROG_SPLIT_HEADER.split
+PROG_SPLIT_KEYVAL		= re.compile(b": ")
+PROG_SPLIT_KEYVAL_SPLIT		= PROG_SPLIT_KEYVAL.split
+
+PROG_CHUNKSTART_HEADER_d_CRNL	= re.compile(rb"^(\w+)\r\n")
+
+HTTP_PROTO_IPP_REQ	= b"ipp_req"  # Via HTTP request
+HTTP_PROTO_IPP_RESP	= b"ipp_resp"  # Via HTTP response
+
+
+class HTTP(pypacker.Packet):
+	class HTTPHeaderTL(triggerlist.TriggerList):
+		def _pack(self, tuple_entry):
+			# logger.debug("packing HTTP-header")
+			# no header = no CRNL
+			if len(self) == 0:
+				# logger.debug("empty buf 2")
+				return b""
+			#return b"\r\n".join([b": ".join(keyval) for keyval in self]) + b"\r\n\r\n"
+			#logger.debug("adding: %r" % (tuple_entry[0] +b": "+ tuple_entry[1] + b"\r\n"))
+			# Note: does not preserve deviating separators, eg "x  :   yz"
+			return tuple_entry[0] + b": " + tuple_entry[1] + b"\r\n"
+
+	__hdr__ = (
+		# content: b"startline"
+		("startline", None, None),  # Including trailing \r\n
+		# content: [("name", "value"), ...]
+		("hdr", None, HTTPHeaderTL),  # Including trailing \r\n
+		("sep", "2s", b"\r\n")
+	)
+
+	"""
+	TODO: higher layer are more prone to segmentation -> skip higher layer dissecting? Manual dissecting needed?
+	__handler__ = {
+		HTTP_PROTO_IPP_REQ: ipp.IPPRequest,
+		HTTP_PROTO_IPP_RESP: ipp.IPPResponse
+	}
+	"""
+
+	def _dissect(self, buf):
+		# Requestline: [method] [uri] [version] eg GET / HTTP/1.1
+		# Responseline: [version] [status] [reason] eg HTTP/1.1 200 OK
+		#logger.debug("Full HTTP: %s", buf)
+		# Request/responseline is mendatory to parse header
+		# TODO: raise exception to trigger dissect error in __init__?
+		if len(buf) == 0 or not PROG_STARTLINE_MATCH(buf):
+			self.sep = None
+			raise Exception()
+			#return 0
+
+		try:
+			bts_header, bts_body = PROG_SPLIT_HEADBODY_SPLIT(buf, maxsplit=1)
+			#logger.debug("Header: %s\nBody: %s", bts_header, bts_body)
+		except ValueError:
+			#logger.debug("no startline/header present")
+			# Deactivate separator
+			self.sep = None
+			# Assume this is part of a bigger (splittet) HTTP-message: no header/only body
+			return 0
+
+		try:
+			startline, bts_header = PROG_SPLIT_HEADER_SPLIT(bts_header, maxsplit=1)
+		except ValueError:
+			# logger.debug("just startline: %r, hdr length=%d" % (bts_header, len(bts_header) + 4))
+			# bts_header was something like "HTTP/1.1 123 status" (\r\n\r\n previously removed)
+			self.startline = bts_header + b"\r\n"
+			return len(bts_header) + 4  # startline + 2 (CR NL) + 0 (header) + 2 (sep: CR NL) + 0 (body)
+
+		self.startline = startline + b"\r\n"
+		# bts_header = hdr1\r\nhdr2 -> hdr1\r\nhdr2\r\n
+		self.hdr(memoryview(bts_header + b"\r\n"), self._parse_header)
+		# Type extraction, TODO: this is not *that* clean
+		# WARNING: requests / responses may not contain "Content-Type"
+		"""
+		body_id = None
+		if b"Content-Type: application/ipp" in bts_body:
+			body_id = HTTP_PROTO_IPP_REQ if b"POST" startline else HTTP_PROTO_IPP_RESP
+		"""
+		# HEADER + "\r\n" + BODY -> newline is part of the header
+		return len(buf) - len(bts_body)
+
+	@staticmethod
+	def _parse_header(buf):
+		#logger.debug("Parsing header: %s", buf)
+		header = []
+		lines = PROG_SPLIT_HEADER_SPLIT(buf)
+
+		for line in lines:
+			#logger.debug("Checking line: %s", line)
+			if len(line) == 0:
+				break
+			try:
+				key, val = PROG_SPLIT_KEYVAL_SPLIT(line, 1)
+				header.append((key, val))
+			except:
+				# Not a "key: value" line
+				logger.warning("Invalid HTTP line: %s", line)
+				header.append(line)
+
+		return header
+
+	def update_content_length(self, newlen=None):
+		"""
+		newlen -- Use this content length for update if not None, otherwise len(body_bytes)
+		return -- New content length
+		"""
+		HDRNAME_CONTENT_LENGTH = b"Content-Length"
+		idx__hdr = self.hdr[lambda h: h[0] == HDRNAME_CONTENT_LENGTH]
+
+		if newlen is None:
+			newlen = len(self.body_bytes)
+
+		clenheader_updated = (HDRNAME_CONTENT_LENGTH, ("%d" % newlen).encode())
+		#logger.debug("New content length header will be: %r" % str(clenheader_updated))
+
+		if len(idx__hdr) != 0:
+			self.hdr[idx__hdr[0][0]] = clenheader_updated
+		else:
+			self.hdr.append(clenheader_updated)
+
+		return newlen
+
+	def get_unchunked(self):
+		"""
+		Chunked example:
+		4\r\n        (bytes to send)
+		Wiki\r\n     (data)
+		6\r\n        (bytes to send)
+		pedia \r\n   (data)
+		E\r\n        (bytes to send)
+		in \r\n
+		\r\n
+		chunks.\r\n  (data)
+		0\r\n        (final byte - 0)
+		\r\n         (end message
+		"""
+		body_bts = memoryview(self.body_bytes)
+		chunk_start = PROG_CHUNKSTART_HEADER_d_CRNL.search(body_bts)
+		off = 0
+		bts_unchunked = []
+
+		while chunk_start:
+			len_hex_str = chunk_start.group()
+			len_of_hex_str = len(len_hex_str)
+			chunk_len = int(len_hex_str.strip(), 16)
+
+			if chunk_len == 0:
+				#logger.debug("Final chunk reached")
+				break
+
+			off_end_chunk = off + len_of_hex_str + chunk_len
+			#logger.debug(f"len_hex_str={len_hex_str}, len_of_hex_str={len_of_hex_str}, chunk_len={chunk_len}")
+
+			bts_unchunked.append(body_bts[off + len_of_hex_str: off_end_chunk])
+			off = off_end_chunk + 2
+			#logger.debug(f"Next chunk? {body_bts[ off: off + 10].tobytes()}")
+			chunk_start = PROG_CHUNKSTART_HEADER_d_CRNL.search(body_bts[off:])
+
+		return b"".join(bts_unchunked)
+
+	# TODO: implement setter
+	# Note: may need reassemblation before unchunking
+	chunked = property(get_unchunked)
+"""
+Presents useful information points for HTTP sessions
+"""
+
+
+class DshellPlugin(HTTPPlugin):
+    def __init__(self):
+        super().__init__(
+            name="httpdump",
+            description="Dump useful information about HTTP sessions",
+            bpf="tcp and (port 80 or port 8080 or port 8000)",
+            author="amm",
+            output=ColorOutput(label=__name__),
+            optiondict={
+                "maxurilen": {
+                    "type": int,
+                    "default": 30,
+                    "metavar": "LENGTH",
+                    "help": "Truncate URLs longer than LENGTH (default: 30). Set to 0 for no truncating."},
+                "maxpost": {
+                    "type": int,
+                    "default": 1000,
+                    "metavar": "LENGTH",
+                    "help": "Truncate POST bodies longer than LENGTH characters (default: 1000). Set to 0 for no truncating."},
+                "maxcontent": {
+                    "type": int,
+                    "default": 0,
+                    "metavar": "LENGTH",
+                    "help": "Truncate response bodies longer than LENGTH characters (default: no truncating). Set to 0 for no truncating."},
+                "showcontent": {
+                    "action": "store_true",
+                    "help": "Display response body"},
+                "showhtml": {
+                    "action": "store_true",
+                    "help": "Display only HTML results"},
+                "urlfilter": {
+                    "type": str,
+                    "default": None,
+                    "metavar": "REGEX",
+                    "help": "Filter to URLs matching this regular expression"}
+                }
+            )
+
+    def premodule(self):
+        if self.urlfilter:
+            import re
+            self.urlfilter = re.compile(self.urlfilter)
+
+    def http_handler(self, conn, request, response):
+        host = request.headers.get('host', conn.serverip)
+        url = host + request.uri
+        pretty_url = url
+
+        # separate URL-encoded data from the location
+        if '?' in request.uri:
+            uri_location, uri_data = request.uri.split('?', 1)
+            pretty_url = host + uri_location
+        else:
+            uri_location, uri_data = request.uri, ""
+
+        # Check if the URL matches a user-defined filter
+        if self.urlfilter and not self.urlfilter.search(pretty_url):
+            return
+
+        if self.maxurilen > 0 and len(uri_location) > self.maxurilen:
+            uri_location = "{}[truncated]".format(uri_location[:self.maxurilen])
+            pretty_url = host + uri_location
+
+        # Set the first line of the alert to show some basic metadata
+        if response == None:
+            msg = ["{} (NO RESPONSE) {}".format(request.method, pretty_url)]
+        else:
+            msg = ["{} ({}) {} ({})".format(request.method, response.status, pretty_url, response.headers.get("content-type", "[no content-type]"))]
+
+        # Determine if there is any POST data from the client and parse
+        if request and request.method == "POST":
+            try:
+                post_params = parse_qs(request.body.decode("utf-8"), keep_blank_values=True)
+                # If parse_qs only returns a single element with a null
+                # value, it's probably an eroneous evaluation. Most likely
+                # base64 encoded payload ending in an '=' character.
+                if len(post_params) == 1 and list(post_params.values()) == [["\x00"]]:
+                    post_params = request.body
+            except UnicodeDecodeError:
+                post_params = request.body
+        else:
+            post_params = {}
+
+        # Get some additional useful data
+        url_params = parse_qs(uri_data, keep_blank_values=True)
+        referer = request.headers.get("referer", None)
+        client_cookie = cookies.SimpleCookie(request.headers.get("cookie", ""))
+        server_cookie = cookies.SimpleCookie(response.headers.get("cookie", ""))
+
+        # Piece together the alert message
+        if referer:
+            msg.append("Referer: {}".format(referer))
+
+        if client_cookie:
+            msg.append("Client Transmitted Cookies:")
+            for k, v in client_cookie.items():
+                msg.append("\t{} -> {}".format(k, v.value))
+
+        if server_cookie:
+            msg.append("Server Set Cookies:")
+            for k, v in server_cookie.items():
+                msg.append("\t{} -> {}".format(k, v.value))
+
+        if url_params:
+            msg.append("URL Parameters:")
+            for k, v in url_params.items():
+                msg.append("\t{} -> {}".format(k, v))
+
+        if post_params:
+            if isinstance(post_params, dict):
+                msg.append("POST Parameters:")
+                for k, v in post_params.items():
+                    msg.append("\t{} -> {}".format(k, v))
+            else:
+                msg.append("POST Data:")
+                msg.append(dshell.util.printable_text(str(post_params)))
+        elif request.body:
+            msg.append("POST Body:")
+            request_body = dshell.util.printable_text(request.body)
+            if self.maxpost > 0 and len(request.body) > self.maxpost:
+                msg.append("{}[truncated]".format(request_body[:self.maxpost]))
+            else:
+                msg.append(request_body)
+
+        if self.showcontent or self.showhtml:
+            if self.showhtml and 'html' not in response.headers.get('content-type', ''):
+                return
+            if 'gzip' in response.headers.get('content-encoding', ''):
+                # TODO gunzipping
+                content = '(gzip encoded)\n{}'.format(response.body)
+            else:
+                content = response.body
+            content = dshell.util.printable_text(content)
+            if self.maxcontent and len(content) > self.maxcontent:
+                content = "{}[truncated]".format(content[:self.maxcontent])
+            msg.append("Body Content:")
+            msg.append(content)
+
+        # Display the start and end times based on Blob instead of Connection
+        kwargs = conn.info()
+        if request:
+            kwargs['starttime'] = request.blob.starttime
+            kwargs['clientbytes'] = len(request.blob.data)
+        else:
+            kwargs['starttime'] = None
+            kwargs['clientbytes'] = 0
+        if response:
+            kwargs['endtime'] = response.blob.endtime
+            kwargs['serverbytes'] = len(response.blob.data)
+        else:
+            kwargs['endtime'] = None
+            kwargs['serverbytes'] = 0
+
+        if post_params:
+            kwargs['post_params'] = post_params
+        if url_params:
+            kwargs['url_params'] = url_params
+        if client_cookie:
+            kwargs['client_cookie'] = client_cookie
+        if server_cookie:
+            kwargs['server_cookie'] = server_cookie
+
+        self.write('\n'.join(msg), **kwargs)
+
+        return conn, request, response
+"""
+This is a base-level plugin inteded to handle HTTP connections.
+
+It inherits from the base ConnectionPlugin and provides a new handler
+function: http_handler(conn, request, response).
+
+It automatically pairs requests/responses, parses headers, reassembles bodies,
+and collects them into HTTPRequest and HTTPResponse objects that are passed
+to the http_handler.
+"""
+
+
+logger = logging.getLogger(__name__)
+
+
+def parse_headers(obj, f):
+    """Return dict of HTTP headers parsed from a file object."""
+    # Logic lifted mostly from dpkt's http module
+    d = {}
+    while 1:
+        line = f.readline()
+        line = line.decode('utf-8')
+        line = line.strip()
+        if not line:
+            break
+        l = line.split(None, 1)
+        if not l[0].endswith(':'):
+            raise dshell.core.DataError("Invalid header {!r}".format(line))
+        k = l[0][:-1].lower()
+        v = len(l) != 1 and l[1] or ''
+        if k in d:
+            if not type(d[k]) is list:
+                d[k] = [d[k]]
+            d[k].append(v)
+        else:
+            d[k] = v
+    return d
+
+
+def parse_body(obj, f, headers):
+    """Return HTTP body parsed from a file object, given HTTP header dict."""
+    # Logic lifted mostly from dpkt's http module
+    if headers.get('transfer-encoding', '').lower() == 'chunked':
+        l = []
+        found_end = False
+        while 1:
+            try:
+                sz = f.readline().split(None, 1)[0]
+            except IndexError:
+                obj.errors.append(dshell.core.DataError('missing chunk size'))
+                # FIXME: If this error occurs sz is not available to continue parsing!
+                #   The appropriate exception should be thrown.
+                raise
+            n = int(sz, 16)
+            if n == 0:
+                found_end = True
+            buf = f.read(n)
+            if f.readline().strip():
+                break
+            if n and len(buf) == n:
+                l.append(buf)
+            else:
+                break
+        if not found_end:
+            raise dshell.core.DataError('premature end of chunked body')
+        body = b''.join(l)
+    elif 'content-length' in headers:
+        n = int(headers['content-length'])
+        body = f.read(n)
+        if len(body) != n:
+            obj.errors.append(dshell.core.DataError('short body (missing {} bytes)'.format(n - len(body))))
+    elif 'content-type' in headers:
+        body = f.read()
+    else:
+        # XXX - need to handle HTTP/0.9
+        body = b''
+    return body
+
+
+class HTTPRequest(object):
+    """
+    A class for HTTP requests
+
+    Attributes:
+        blob    : the Blob instance of the request
+        errors  : a list of caught exceptions from parsing
+        method  : the method of the request (e.g. GET, PUT, POST, etc.)
+        uri     : the URI being requested (host not included)
+        version : the HTTP version (e.g. "1.1" for "HTTP/1.1")
+        headers : a dictionary containing the headers and values
+        body    : bytestring of the reassembled body, after the headers
+    """
+    _methods = (
+        'GET', 'PUT', 'ICY',
+        'COPY', 'HEAD', 'LOCK', 'MOVE', 'POLL', 'POST',
+        'BCOPY', 'BMOVE', 'MKCOL', 'TRACE', 'LABEL', 'MERGE',
+        'DELETE', 'SEARCH', 'UNLOCK', 'REPORT', 'UPDATE', 'NOTIFY',
+        'BDELETE', 'CONNECT', 'OPTIONS', 'CHECKIN',
+        'PROPFIND', 'CHECKOUT', 'CCM_POST',
+        'SUBSCRIBE', 'PROPPATCH', 'BPROPFIND',
+        'BPROPPATCH', 'UNCHECKOUT', 'MKACTIVITY',
+        'MKWORKSPACE', 'UNSUBSCRIBE', 'RPC_CONNECT',
+        'VERSION-CONTROL',
+        'BASELINE-CONTROL'
+        )
+
+    def __init__(self, blob):
+        self.errors = []
+        self.headers = {}
+        self.body = b''
+        self.blob = blob
+        data = io.BytesIO(blob.data)
+        rawline = data.readline()
+        try:
+            line = rawline.decode('utf-8')
+        except UnicodeDecodeError:
+            line = ''
+        l = line.strip().split()
+        if len(l) != 3 or l[0] not in self._methods or not l[2].startswith('HTTP'):
+            self.errors.append(dshell.core.DataError('invalid HTTP request: {!r}'.format(rawline)))
+            self.method = ''
+            self.uri = ''
+            self.version = ''
+            return
+        else:
+            self.method = l[0]
+            self.uri = l[1]
+            self.version = l[2][5:]
+        self.headers = parse_headers(self, data)
+        self.body = parse_body(self, data, self.headers)
+
+
+class HTTPResponse(object):
+    """
+    A class for HTTP responses
+
+    Attributes:
+        blob    : the Blob instance of the request
+        errors  : a list of caught exceptions from parsing
+        version : the HTTP version (e.g. "1.1" for "HTTP/1.1")
+        status  : the status code of the response (e.g. "200" or "304")
+        reason  : the status text of the response (e.g. "OK" or "Not Modified")
+        headers : a dictionary containing the headers and values
+        body    : bytestring of the reassembled body, after the headers
+    """
+    def __init__(self, blob):
+        self.errors = []
+        self.headers = {}
+        self.body = b''
+        self.blob = blob
+        data = io.BytesIO(blob.data)
+        rawline = data.readline()
+        try:
+            line = rawline.decode('utf-8')
+        except UnicodeDecodeError:
+            line = ''
+        l = line.strip().split(None, 2)
+        if len(l) < 2 or not l[0].startswith("HTTP") or not l[1].isdigit():
+            self.errors.append(dshell.core.DataError('invalid HTTP response: {!r}'.format(rawline)))
+            self.version = ''
+            self.status = ''
+            self.reason = ''
+            return
+        else:
+            self.version = l[0][5:]
+            self.status = l[1]
+            self.reason = l[2]
+        self.headers = parse_headers(self, data)
+        self.body = parse_body(self, data, self.headers)
+
+    def decompress_gzip_content(self):
+        """
+        If this response has Content-Encoding set to something with "gzip",
+        this function will decompress it and store it in the body.
+        """
+        if "gzip" in self.headers.get("content-encoding", ""):
+            try:
+                iobody = io.BytesIO(self.body)
+            except TypeError as e:
+                # TODO: Why would body ever not be bytes? If it's not bytes, then that means
+                #   we have a bug somewhere in the code and therefore should just allow the
+                #   original exception to be raised.
+                self.errors.append(dshell.core.DataError("Body was not a byte string ({!s}). Could not decompress.".format(type(self.body))))
+                return
+            try:
+                self.body = gzip.GzipFile(fileobj=iobody).read()
+            except OSError as e:
+                self.errors.append(OSError("Could not gunzip body. {!s}".format(e)))
+                return
+
+
+class HTTPPlugin(dshell.core.ConnectionPlugin):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Use "gunzip" argument to automatically decompress gzipped responses
+        self.gunzip = kwargs.get("gunzip", False)
+
+    def connection_handler(self, conn):
+        """
+        Goes through each Blob in a Connection, assuming they appear in pairs
+        of requests and responses, and builds HTTPRequest and HTTPResponse
+        objects.
+
+        After a response (or only a request at the end of a connection),
+        http_handler is called. If it returns nothing, the respective blobs
+        are marked as hidden so they won't be passed to additional plugins.
+        """
+        request = None
+        response = None
+        for blob in conn.blobs:
+            # blob.reassemble(allow_overlap=True, allow_padding=True)
+            if not blob.data:
+                continue
+            if blob.direction == 'cs':
+                # client-to-server request
+                request = HTTPRequest(blob)
+                for req_error in request.errors:
+                    self.debug("Request Error: {!r}".format(req_error))
+            elif blob.direction == 'sc':
+                # server-to-client response
+                response = HTTPResponse(blob)
+                for rep_error in response.errors:
+                    self.debug("Response Error: {!r}".format(rep_error))
+                if self.gunzip:
+                    response.decompress_gzip_content()
+                http_handler_out = self.http_handler(conn=conn, request=request, response=response)
+                if not http_handler_out:
+                    if request:
+                        request.blob.hidden = True
+                    if response:
+                        response.blob.hidden = True
+                request = None
+                response = None
+        if request and not response:
+            http_handler_out = self.http_handler(conn=conn, request=request, response=None)
+            if not http_handler_out:
+                blob.hidden = True
+        return conn
+
+    def http_handler(self, conn, request, response):
+        """
+        A placeholder.
+
+        Plugins will be able to overwrite this to perform custom activites
+        on HTTP data.
+
+        It SHOULD return a list containing the sames types of values that came
+        in as arguments (i.e. return (conn, request, response)) or None. This
+        is mostly a consistency thing. Realistically, it only needs to return
+        some value that evaluates to True to pass the Blobs along to additional
+        plugins.
+
+        Arguments:
+            conn:       a Connection object
+            request:    a HTTPRequest object
+            response:   a HTTPResponse object
+        """
+        return conn, request, response
+
+DshellPlugin = None
+
+####################################################################
+#
+#
+#           DSHELL H SCRIPTS END
+#
+#
+###################################################################
+
+
+
+####################################################################
+#
+#
+#           DSHELL I SCRIPTS START
+#
+#
+###################################################################
+
+
+"""
+Internet Control Message Protocol for IPv4.
+https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml
+https://tools.ietf.org/html/rfc792
+"""
+
+logger = logging.getLogger("pypacker")
+
+
+# Types (icmp_type) and codes (icmp_code)
+# http://www.iana.org/assignments/icmp-parameters
+ICMP_ECHO_REPLY			= 0	# echo reply
+ICMP_UNREACH			= 3	# dest unreachable
+ICMP_SRCQUENCH			= 4	# packet lost, slow down
+ICMP_REDIRECT			= 5	# shorter route
+ICMP_ALTHOSTADDR		= 6	# alternate host address
+ICMP_ECHO			= 8	# echo service
+ICMP_RTRADVERT			= 9	# router advertise
+ICMP_RTRSEL			= 10	# router selection
+ICMP_TIMEXCEED			= 11	# time exceeded, code:
+ICMP_PARAMPROB			= 12	# ip header bad
+ICMP_TSTAMP			= 13	# timestamp request
+ICMP_TSTAMPREPLY		= 14	# timestamp reply
+ICMP_INFO			= 15	# information request
+ICMP_INFOREPLY			= 16	# information reply
+ICMP_MASK			= 17	# address mask request
+ICMP_MASKREPLY			= 18	# address mask reply
+ICMP_TRACEROUTE			= 30	# traceroute
+ICMP_DATACONVERR		= 31	# data conversion error
+ICMP_MOBILE_REDIRECT		= 32	# mobile host redirect
+ICMP_IP6_WHEREAREYOU		= 33	# IPv6 where-are-you
+ICMP_IP6_IAMHERE		= 34	# IPv6 i-am-here
+ICMP_MOBILE_REG			= 35	# mobile registration req
+ICMP_MOBILE_REGREPLY		= 36	# mobile registration reply
+ICMP_DNS			= 37	# domain name request
+ICMP_DNSREPLY			= 38	# domain name reply
+ICMP_SKIP			= 39	# SKIP
+ICMP_PHOTURIS			= 40	# Photuris
+
+
+CODE_UNREACH_NET = 0  # bad net
+CODE_UNREACH_HOST = 1  # bad host
+CODE_UNREACH_PROTO = 2  # bad protocol
+CODE_UNREACH_PORT = 3  # bad port
+CODE_UNREACH_NEEDFRAG = 4  # IP_DF caused drop
+CODE_UNREACH_SRCFAIL = 5  # src route failed
+CODE_UNREACH_NET_UNKNOWN = 6  # unknown net
+CODE_UNREACH_HOST_UNKNOWN = 7  # unknown host
+CODE_UNREACH_ISOLATED = 8  # src host isolated
+CODE_UNREACH_NET_PROHIB = 9  # for crypto devs
+CODE_UNREACH_HOST_PROHIB = 10  # ditto
+CODE_UNREACH_TOSNET = 11  # bad tos for net
+CODE_UNREACH_TOSHOST = 12  # bad tos for host
+CODE_UNREACH_FILTER_PROHIB = 13  # prohibited access
+CODE_UNREACH_HOST_PRECEDENCE = 14  # precedence error
+CODE_UNREACH_PRECEDENCE_CUTOFF = 15  # precedence cutoff
+
+CODE_REDIRECT_NET = 0  # for network
+CODE_REDIRECT_HOST = 1  # for host
+CODE_REDIRECT_TOSNET = 2  # for tos and net
+CODE_REDIRECT_TOSHOST = 3  # for tos and host
+
+CODE_PHOTURIS_UNKNOWN_INDEX = 0  # unknown sec index
+CODE_PHOTURIS_AUTH_FAILED = 1  # auth failed
+CODE_PHOTURIS_DECOMPRESS_FAILED = 2  # decompress failed
+CODE_PHOTURIS_DECRYPT_FAILED = 3  # decrypt failed
+CODE_PHOTURIS_NEED_AUTHN = 4  # no authentication
+CODE_PHOTURIS_NEED_AUTHZ = 5  # no authorization
+
+CODE_RTRADVERT_NORMAL = 0  # normal
+CODE_RTRADVERT_NOROUTE_COMMON = 16  # selective routing
+CODE_RTRSOLICIT = 10  # router solicitation
+
+CODE_TIMEXCEED_INTRANS = 0  # ttl==0 in transit
+CODE_TIMEXCEED_REASS = 1  # ttl==0 in reass
+
+CODE_PARAMPROB_ERRATPTR = 0  # req. opt. absent
+CODE_PARAMPROB_OPTABSENT = 1  # req. opt. absent
+CODE_PARAMPROB_LENGTH = 2  # bad length
+
+
+class ICMP(pypacker.Packet):
+	__hdr__ = (
+		("type", "B", ICMP_ECHO, FIELD_FLAG_IS_TYPEFIELD),
+		("code", "B", 0), # Code depends on type
+		# Place sum here and not higher layer: otherwise..
+		# - higher layer needs to access lower layer for sum
+		# - duplicated code
+		# Additionally code has to be placed here, too
+		("sum", "H", 0, FIELD_FLAG_AUTOUPDATE)
+	)
+
+	def _update_fields(self):
+		# logger.debug("sum is: %d" % self.sum)
+		if self.sum_au_active and self._changed():
+			# logger.debug("sum is: %d" % self.sum)
+			# logger.debug("header: %r", self.header_bytes)
+			# logger.debug("body: %r", self.body_bytes)
+			self.sum = 0
+			self.sum = checksum.in_cksum(self.header_bytes + self.body_bytes)
+			# logger.debug("sum is: %d" % self.sum)
+
+	def _dissect(self, buf):
+		# logger.debug("ICMP: adding fields for type: %d" % buf[0])
+		return 4, buf[0]
+
+	class Echo(pypacker.Packet):
+		__hdr__ = (
+			("id", "H", 0),
+			("seq", "H", 1)
+		)
+
+	class Unreach(pypacker.Packet):
+		__hdr__ = (
+			("pad", "I", 0),
+		)
+
+	class Quench(pypacker.Packet):
+		__hdr__ = (
+			("pad", "I", 0),
+		)
+
+	class Redirect(pypacker.Packet):
+		__hdr__ = (
+			("gw", "I", 0),
+		)
+
+	class RouterAdvertisement(pypacker.Packet):
+		__hdr__ = (
+			("numaddr", "B", 0),
+			("addrsize", "B", 0),
+			("lifetime", "H", 0)
+		)
+
+	class RouterSelection(pypacker.Packet):
+		__hdr__ = (
+			("numaddr", "B", 0),
+			("addrsize", "B", 0),
+			("lifetime", "H", 0)
+		)
+
+	class TimeExceed(pypacker.Packet):
+		__hdr__ = (
+			("pad", "I", 0),
+		)
+
+	class ParamProblem(pypacker.Packet):
+		__hdr__ = (
+			("pointer", "B", 0),
+			("unused", "3s", b"\x00" * 3)
+		)
+
+	class Photuris(pypacker.Packet):
+		class ParamProblem(pypacker.Packet):
+			__hdr__ = (
+				("reserved", "H", 0),
+				("pointer", "H", 0)
+			)
+
+	@staticmethod
+	def _trl_code_create_descr_cb():
+		type__code__name = pypacker.recusive_dict()
+		variables_name__value = globals()
+
+		for vname, vvalue in variables_name__value.items():
+			type_key = None
+
+			if "UNREACH" in vname:
+				type_key = ICMP_UNREACH
+			elif "REDIRECT" in vname:
+				type_key = ICMP_REDIRECT
+			elif "PHOTURIS" in vname:
+				type_key = ICMP_PHOTURIS
+			elif "RTRADVERT" in vname:
+				type_key = ICMP_RTRADVERT
+			elif "TIMEXCEED" in vname:
+				type_key = ICMP_TIMEXCEED
+			elif "PARAMPROB" in vname:
+				type_key = ICMP_PARAMPROB
+
+			if type_key is not None:
+				pkg_mod = ICMP.__module__.split(".") # pypacker, layerX, icmp
+				type__code__name[type_key][vvalue] = pkg_mod[2] + "." + vname, \
+					(pkg_mod[0] + "." + pkg_mod[1], pkg_mod[2], "", vname)
+
+		return type__code__name
+
+	@staticmethod
+	def _trl_code_get_description_cb(obj_self, code, type__code__name):
+		if obj_self.type not in type__code__name:
+			return "", []
+		return type__code__name[obj_self.type].get(code, ("", []))
+
+	# TODO: add test cases
+	# - Correct description on 1-dim trl
+	# - Correct description on 2-dim trl
+	type_t = pypacker.get_property_translator("type", "ICMP_")
+	code_t = pypacker.get_property_translator("code", "CODE_",
+			cb_create_descriptions=_trl_code_create_descr_cb,
+			cb_get_description=_trl_code_get_description_cb
+		) # noqa E124
+
+	__handler__ = {
+		(ICMP_ECHO, ICMP_ECHO_REPLY): Echo,
+		ICMP_UNREACH: Unreach,
+		ICMP_SRCQUENCH: Quench,
+		ICMP_REDIRECT: Redirect,
+		ICMP_RTRADVERT: RouterAdvertisement,
+		ICMP_RTRSEL: RouterSelection,
+		ICMP_TIMEXCEED: TimeExceed,
+		ICMP_PARAMPROB: ParamProblem,
+		ICMP_PHOTURIS: Photuris
+	}
+
+"""
+Internet Control Message Protocol for IPv6.
+https://tools.ietf.org/html/rfc2463
+"""
+
+logger = logging.getLogger("pypacker")
+
+
+# See https://www.iana.org/assignments/icmpv6-parameters/icmpv6-parameters.xhtml#icmpv6-parameters-codes-2
+ICMP6_DST_UNREACH		= 1		# dest unreachable, codes:
+ICMP6_PACKET_TOO_BIG		= 2		# packet too big
+ICMP6_TIME_EXCEEDED		= 3		# time exceeded, code:
+ICMP6_PARAM_PROB		= 4		# ip6 header bad
+ICMP6_ECHO_REQUEST		= 128		# echo service
+ICMP6_ECHO_REPLY		= 129		# echo reply
+ICMP6_MCAST_LISTENER_QUERY	= 130		# multicast listener query
+ICMP6_MCAST_LISTENER_REPORT	= 131		# multicast listener report
+ICMP6_MCAST_LISTENER_DONE	= 132		# multicast listener done
+ICMP6_ROUTER_SOLICIT		= 133		# router solicitation
+ICMP6_ROUTER_ADVERT		= 134		# router advertisment
+ICMP6_NEIGHBOR_SOLICIT		= 135		# neighbor solicitation
+ICMP6_NEIGHBOR_ADVERT		= 136		# neighbor advertisment
+ICMP6_REDIRECT			= 137		# redirect
+ICMP6_ROUTER_RENUMBERING	= 138		# router renumbering
+ICMP6_NODE_INFO_QUERY		= 139		# who are you request
+ICMP6_NODE_INFO_REPLY		= 140		# who are you reply
+
+
+CODE_UNREACH_NOROUTE_DO_DST		= 0
+CODE_UNREACH_COMM_DST_PROHIB		= 1
+CODE_UNREACH_BEYOND_SCOPE_SRC		= 2
+CODE_UNREACH_ADDR_UNREACH		= 3
+CODE_UNREACH_PORT_UNREACH		= 4
+CODE_UNREACH_SRC_ADDR_FAILED_POLICY	= 5
+CODE_UNREACH_REJECT_ROUTE_TO_DST	= 6
+CODE_UNREACH_ERROR_IN_SRC_ROUTING	= 7
+CODE_UNREACH_HEADERS_TOO_LONG		= 8
+
+CODE_PARAM_PROB_ERR_HEADER				= 0
+CODE_PARAM_PROB_UNRECOGNIZED_NXT_HEADER_TYPE		= 1
+CODE_PARAM_PROB_UNRECOGNIZED_IPV6_OPTION		= 2
+CODE_PARAM_PROB_IPV6_INCOMPLETE_HEADER_CHAIN		= 3
+CODE_PARAM_PROB_SR_UPPER_LAYER_ERR			= 4
+CODE_PARAM_PROB_UNRECOGNIZED_NXT_HEADER_TYPE_BY_IM_NODE = 5
+CODE_PARAM_PROB_EXT_HEADER_TOO_BIG			= 6
+CODE_PARAM_PROB_EXT_HEADER_CHAIN_TOO_LONG		= 7
+CODE_PARAM_PROB_TOO_MANY_EXT_HEADERS			= 8
+CODE_PARAM_PROB_TOO_MANY_OPTIONS_IN_EXT_HEADER		= 9
+CODE_PARAM_PROB_OPT_TOO_BIG				= 10
+
+CODE_TIMEEXCEED_HOP_LIMIT_EXCEED	= 0
+CODE_TIMEEXCEED_FRAG_REASSEMBLY		= 1
+
+
+#
+# Option codes
+#
+OPT_TYPE_SRC_LL = 1
+OPT_TYPE_PREFIX_INFO = 3
+OPT_TYPE_MTU = 5
+OPT_ROUTEINFO = 24
+OPT_TYPE_RECUSRICE_DNS = 25
+
+
+pack_ipv6_icmp6 = struct.Struct(">16s16sII").pack
+checksum_in_cksum = checksum.in_cksum
+
+
+class ICMP6(pypacker.Packet):
+	__hdr__ = (
+		("type", "B", ICMP6_ECHO_REQUEST, FIELD_FLAG_IS_TYPEFIELD),
+		# Place sum here and not higher layer: otherwise..
+		# - higher layer needs to access lower layer for sum
+		# - duplicated code
+		# Additionally code has to be placed here, too
+		("code", "B", 0), # Code depends on type
+		("sum", "H", 0, FIELD_FLAG_AUTOUPDATE)
+	)
+
+	def _dissect(self, buf):
+		return 4, buf[0]
+
+	def _calc_sum(self):
+		try:
+			# We need src/dst for checksum-calculation
+			src, dst = self._lower_layer.src, self._lower_layer.dst
+		except Exception:
+			# Not an IP packet as lower layer (src, dst not present) or invalid src/dst
+			# logger.debug("could not calculate checksum: %r" % e)
+			return
+
+		# Pseudoheader
+		# Packet length = length of upper layers
+		self.sum = 0
+		# logger.debug("TCP sum recalc: IP6= len(src)=%d\n%s\n%s\nhdr=%s\nbody=%s" %
+		#			 (len(src), src, dst, self.header_bytes, self.body_bytes))
+		pkt = self.header_bytes + self.body_bytes
+		hdr = pack_ipv6_icmp6(src, dst, len(pkt), 58)
+		# This will set the header status to changes, should be reset by calling bin()
+		self.sum = checksum_in_cksum(hdr + pkt)
+		#logger.debug(">>> new checksum: %0X" % self.sum)
+
+	def _update_fields(self):
+		try:
+			if self.lower_layer._changed():
+				self._calc_sum()
+		except Exception:
+			# no lower layer, nothing to update
+			# logger.debug("%r" % ex)
+			pass
+
+	class Unreach(pypacker.Packet):
+		__hdr__ = (("pad", "I", 0), )
+
+	class TooBig(pypacker.Packet):
+		__hdr__ = (
+			("pad", "I", 0),
+			("mtu", "I", 1232)
+		)
+
+	class TimeExceed(pypacker.Packet):
+		__hdr__ = (("pad", "I", 0), )
+
+	class ParamProb(pypacker.Packet):
+		__hdr__ = (
+			("pad", "I", 0),
+			("ptr", "I", 0),
+		)
+
+	class Echo(pypacker.Packet):
+		__hdr__ = (
+			("id", "H", 0),
+			("seq", "H", 0)
+		)
+
+	class NeighbourSolicitation(pypacker.Packet):
+		__hdr__ = (
+			("rsv", "4s", b"\x00" * 4),
+			("target", "16s", b"\x00" * 16),
+			("opts", None, triggerlist.TriggerList)
+		)
+
+		def _dissect(self, buf):
+			self.opts(buf[20:], ICMP6._parse_icmp6opt)
+			return len(buf)
+
+		target_s = pypacker.get_property_ip6("target")
+
+	class NeighbourAdvertisement(pypacker.Packet):
+		__hdr__ = (
+			("flags", "4s", b"\x00" * 4),
+			("target", "16s", b"\x00" * 16),
+			("opts", None, triggerlist.TriggerList)
+		)
+
+		def _dissect(self, buf):
+			self.opts(buf[20:], ICMP6._parse_icmp6opt)
+			return len(buf)
+
+		target_s = pypacker.get_property_ip6("target")
+
+	class RouterSolicitation(pypacker.Packet):
+		__hdr__ = (
+			("reserved", "I", 0),
+		)
+
+	class MulticastRouterSolicitation(pypacker.Packet):
+		__hdr__ = (
+			("reserved", "I", 0),
+		)
+
+	class RouterAdvertisement(pypacker.Packet):
+		__hdr__ = (
+			("hop", "B", 0),
+			("flags", "B", 0),
+			("rlife", "H", 0),
+			("reachable_time", "I", 0),
+			("retrans_time", "I", 0),
+			# eg Source link/1, MTU/5, Prefix Info/3
+			("opts", None, triggerlist.TriggerList)
+		)
+
+		class SourceLLOpt(pypacker.Packet):
+			__hdr__ = (
+				("type", "B", OPT_TYPE_SRC_LL),
+				("len", "B", 1),
+				("addr", None, b"\x00" * 6)
+			)
+
+			addr_s = pypacker.get_property_mac("addr")
+
+		class PrefixOpt(pypacker.Packet):
+			__hdr__ = (
+				("type", "B", OPT_TYPE_PREFIX_INFO),
+				("len", "B", 4),
+				("plen", "B", 64),
+				("flags", "B", 0xC0),
+				("lifetime", "I", 2592000),
+				("preftime", "I", 604800),
+				("reserved", "I", 0),
+				("prefix", None, b"\x00" * 16)
+			)
+
+			# TODO: Format depends on type
+			prefix_s = pypacker.get_property_ip6("prefix")
+
+		class RouteOpt(pypacker.Packet):
+			__hdr__ = (
+				("type", "B", OPT_ROUTEINFO),
+				("len", "B", 3),
+				("plen", "B", 128),
+				("flags", "B", 0x08),
+				("routelt", "I", 4096),
+				("prefix", None, b"\x00" * 16)
+			)
+
+			prefix_s = pypacker.get_property_ip6("prefix")
+
+		class MTUOpt(pypacker.Packet):
+			__hdr__ = (
+				("type", "B", OPT_TYPE_MTU),
+				("len", "B", 1),
+				("reserved", "H", 0),
+				("mtu", "I", 0)
+			)
+
+		class RecursiveDNSOpt(pypacker.Packet):
+			__hdr__ = (
+				("type", "B", OPT_TYPE_RECUSRICE_DNS),
+				("len", "B", 3),
+				("reserved", "H", 0),
+				("ltime", "I", 0),
+				("dnsserver", "16s", b"\x00" * 16)
+			)
+
+			addr_s = pypacker.get_property_ip6("dnsserver")
+
+		def _dissect(self, buf):
+			self.opts(buf[12:], ICMP6._parse_icmp6opt)
+			return len(buf)
+
+	class MulticastRouterAdvertisement(pypacker.Packet):
+		__hdr__ = (
+			("qinterval", "H", 0x30),
+			("robustness", "H", 0x06),
+		)
+
+	class MulticastListenerQuery(pypacker.Packet):
+		__hdr__ = (
+			("maxdelay", "H", 0),
+			("reserved", "H", 0),
+			("addr", "16s", b"\x00" * 16)
+		)
+
+		class MLDv2(pypacker.Packet):
+			__hdr__ = (
+				("flags", "B", 0x07),
+				("QQIC", "B", 0x78),
+				("sources", "H", 0)
+			)
+
+	class MulticastListenerReport(pypacker.Packet):
+		__hdr__ = (
+			("reserved", "H", 0),
+			("addrcnt", "H", 0),
+			("records", None, triggerlist.TriggerList),
+		)
+
+		class Record(pypacker.Packet):
+			TYPE_INCLUDE = 3
+
+			__hdr__ = (
+				("type", "B", 3),
+				("len", "B", 0),
+				("sources", "H", 0),
+				("addr", "16s", b"\x00" * 16)
+			)
+
+	@staticmethod
+	def _parse_icmp6opt(buf):
+		opts = []
+		off = 0
+
+		while off < len(buf):
+			optlen = buf[off + 1] * 8
+			opt = ICMP6.ICMPv6Opt(buf[off: off + optlen])
+			opts.append(opt)
+			off += optlen
+		return opts
+
+	@staticmethod
+	def _trl_code_create_descr_cb():
+		type__code__name = pypacker.recusive_dict()
+		variables_name__value = globals()
+
+		for vname, vvalue in variables_name__value.items():
+			type_key = None
+
+			if "UNREACH" in vname:
+				type_key = ICMP6_DST_UNREACH
+			elif "TIMEXCEED" in vname:
+				type_key = ICMP6_TIME_EXCEEDED
+			elif "PARAM_PROB" in vname:
+				type_key = ICMP6_PARAM_PROB
+
+			if type_key is not None:
+				pkg_mod = ICMP6.__module__.split(".") # pypacker, layerX, icmp6
+				type__code__name[type_key][vvalue] = pkg_mod[2] + "." + vname, \
+					(pkg_mod[0] + "." + pkg_mod[1], pkg_mod[2], "", vname)
+
+		return type__code__name
+
+	@staticmethod
+	def _trl_code_get_description_cb(obj_self, code, type__code__name):
+		if obj_self.type not in type__code__name:
+			return "", []
+		return type__code__name[obj_self.type].get(code, ("", []))
+
+	type_t = pypacker.get_property_translator("type", "ICMP6_")
+	code_t = pypacker.get_property_translator("code", "CODE_",
+			cb_create_descriptions=_trl_code_create_descr_cb,
+			cb_get_description=_trl_code_get_description_cb
+		) # noqa E124
+
+	__handler__ = {
+		ICMP6_DST_UNREACH: Unreach,
+		ICMP6_PACKET_TOO_BIG: TooBig,
+		ICMP6_TIME_EXCEEDED: TimeExceed,
+		ICMP6_PARAM_PROB: ParamProb,
+		ICMP6_ECHO_REQUEST: Echo,
+		ICMP6_ECHO_REPLY: Echo,
+		ICMP6_NEIGHBOR_SOLICIT: NeighbourSolicitation,
+		ICMP6_NEIGHBOR_ADVERT: NeighbourAdvertisement,
+		ICMP6_ROUTER_ADVERT: RouterAdvertisement
+	}
+
+"""IEEE 802.11"""
+
+logger = logging.getLogger("pypacker")
+
+
+# Frame Types
+MGMT_TYPE		= 0
+CTL_TYPE		= 1
+DATA_TYPE		= 2
+
+# Frame Sub-Types
+# MGMT_TYPE
+M_ASSOC_REQ		= 0
+M_ASSOC_RESP		= 1
+M_REASSOC_REQ		= 2
+M_REASSOC_RESP		= 3
+M_PROBE_REQ		= 4
+M_PROBE_RESP		= 5
+M_DISASSOC		= 10
+M_AUTH			= 11
+M_DEAUTH		= 12
+M_ACTION		= 13
+M_BEACON		= 8
+M_ATIM			= 9
+
+# CTL_TYPE
+C_BLOCK_ACK_REQ		= 8
+C_BLOCK_ACK		= 9
+C_PS_POLL		= 10
+C_RTS			= 11
+C_CTS			= 12
+C_ACK			= 13
+C_CF_END		= 14
+C_CF_END_ACK		= 15
+
+# DATA_TYPE
+D_NORMAL		= 0
+D_DATA_CF_ACK		= 1
+D_DATA_CF_POLL		= 2
+D_DATA_CF_ACK_POLL	= 3
+D_NULL			= 4
+D_CF_ACK		= 5
+D_CF_POLL		= 6
+D_CF_ACK_POLL		= 7
+D_QOS_DATA		= 8
+D_QOS_CF_ACK		= 9
+D_QOS_CF_POLL		= 10
+D_QOS_CF_ACK_POLL	= 11
+D_QOS_NULL		= 12
+D_QOS_CF_POLL_EMPTY	= 14
+
+TO_DS_FLAG		= 1
+FROM_DS_FLAG		= 2
+INTER_DS_FLAG		= 3
+
+
+# name : (mask, offset)
+_FRAMECTRL_SUBHEADERDATA = {
+	"version": (0x0300, 8),
+	"type": (0x0C00, 10),
+	"subtype": (0xF000, 12),
+	"to_ds": (0x0001, 0),
+	"from_ds": (0x0002, 1),
+	"more_frag": (0x0004, 2),
+	"retry": (0x0008, 3),
+	"pwr_mgt": (0x0010, 4),
+	"more_data": (0x0020, 5),
+	"protected": (0x0040, 6),
+	"order": (0x0080, 7),
+	"from_to_ds": (0x0002 | 0x0001, 0),
+}
+
+# needed to distinguish subtypes via types
+TYPE_FACTORS		= [16, 32, 64]
+TYPE_FACTOR_PROTECTED	= 128
+
+_subheader_properties = []
+
+IEEE_FIELDS_SRC_DST_BSSID = ["src", "dst", "bssid"]
+
+# Set properties to access flags
+for subfield_name, mask_off in _FRAMECTRL_SUBHEADERDATA.items():
+	# logger.debug("setting prop: %r, %X, %X" % (subfield_name, mask_off[0], mask_off[1]))
+	subheader = [
+		subfield_name,
+		# lambda**2: avoid lexical closure, do not refer to value via reference
+		# Could be called in _dissect: used shadowed variable instead
+		( # pylint: disable=unnecessary-direct-lambda-call
+			lambda mask, off:
+			(lambda _obj: ((_obj.framectl if _obj._unpacked is not None else _obj._framectl) & mask) >> off)
+		)(mask_off[0], mask_off[1]),
+		( # pylint: disable=unnecessary-direct-lambda-call
+			lambda mask, off:
+			(lambda _obj, _val: setattr(_obj, "framectl", # pylint: disable=unnecessary-direct-lambda-call
+				((_obj.framectl if _obj._unpacked is not None else _obj._framectl) & ~mask) | (_val << off)))
+		)
+		(mask_off[0], mask_off[1]),
+	]
+	_subheader_properties.append(subheader)
+
+
+class IEEE80211(pypacker.Packet):
+	__hdr__ = (
+		# AAAABBCC | 00000000
+		# AAAA = subtype BB = type CC = version
+		("framectl", "H", 0),
+		("duration", "H", 0x3A01)  # 314 microseconds
+	)
+
+	__hdr_sub__ = _subheader_properties
+
+	def _dissect(self, buf):
+		self._framectl = unpack_H(buf[:2])[0]
+		#logger.debug("ieee80211 type/subtype is=%X/%X, handler=%r" %
+		#	(self.type, self.subtype,
+		#	pypacker.Packet._id_handlerclass_dct[self.__class__][TYPE_FACTORS[self.type] + self.subtype]))
+		return 4, TYPE_FACTORS[self.type] + self.subtype
+
+	def is_beacon(self):
+		"""return -- True if packet is a beacon. Avoids parsing upper layer."""
+		return self.type == MGMT_TYPE and self.subtype == M_BEACON
+
+	def extract_client_macs(self):
+		"""
+		Extracts client MACs from upper layer if this is a data packet.
+
+		return -- [mac_client1, ...] or [] if no client macs could be found
+		"""
+		macs_clients = []
+
+		# data: client -> AP or client <- AP
+		if self.type == DATA_TYPE:
+			if self.from_ds == 1 and self.to_ds == 0:
+				macs_clients.append(self.higher_layer.dst)
+			elif self.from_ds == 0 and self.to_ds == 1:
+				macs_clients.append(self.higher_layer.src)
+
+		return [addr for addr in macs_clients if not utils.is_special_mac(addr)]
+
+	#
+	# mgmt frames
+	#
+	class Beacon(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("bssid", "6s", b"\x00" * 6),
+			# 12 Bits: 0->4095 | 4 Bits
+			# SF SS (LE)
+			("seq_frag", "H", 0),
+			# _ts (integer) is saved as LE
+			("_ts", "Q", 0),
+			("interval", "H", 0x6400),
+			("capa", "H", 0x0100),
+			("params", None, triggerlist.TriggerList)
+		)
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		def _get_ts(self):
+			# LE->BE: dirty but simple
+			return unpack_Q_le(pack_Q(self._ts))[0]
+
+		def _set_ts(self, val):
+			self._ts = unpack_Q_le(pack_Q(val))[0]
+
+		def _get_essid(self):
+			return self.params[lambda v: v.id == IEEE80211.IE_SSID][0][1].body_bytes
+
+		seq = property(_get_seq, _set_seq)
+		ts = property(_get_ts, _set_ts)
+		dst_s = pypacker.get_property_mac("dst")
+		bssid_s = pypacker.get_property_mac("bssid")
+		src_s = pypacker.get_property_mac("src")
+		essid = property(_get_essid)
+
+		def _dissect(self, buf):
+			#logger.debug(self.__class__)
+			self.params(buf[32:], IEEE80211._unpack_ies)
+			return len(buf)
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class Action(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("bssid", "6s", b"\x00" * 6),
+			("seq_frag", "H", 0),
+			("category", "B", 0),
+			("code", "B", 0)
+		)
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		seq = property(_get_seq, _set_seq)
+
+		class BlockAckRequest(pypacker.Packet):
+			__hdr__ = (
+				("dialog", "B", 0),
+				("parameters", "H", 0),
+				("timeout", "H", 0),
+				("starting_seq", "H", 0),
+			)
+
+		class BlockAckResponse(pypacker.Packet):
+			__hdr__ = (
+				("dialog", "B", 0),
+				("status_code", "H", 0),
+				("parameters", "H", 0),
+				("timeout", "H", 0),
+			)
+
+		CATEGORY_BLOCK_ACK	= 3
+		CODE_BLOCK_ACK_REQUEST	= 0
+		CODE_BLOCK_ACK_RESPONSE	= 1
+
+		dst_s = pypacker.get_property_mac("dst")
+		src_s = pypacker.get_property_mac("src")
+		bssid_s = pypacker.get_property_mac("bssid")
+
+		def _dissect(self, buf):
+			# logger.debug(">>>>>>>> ACTION!!!")
+			# category: block ack, code: request or response
+			return 22, buf[20] * 4 + buf[21]
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class ProbeReq(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("bssid", "6s", b"\x00" * 6),
+			("seq_frag", "H", 0),
+			("params", None, triggerlist.TriggerList)
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		bssid_s = pypacker.get_property_mac("bssid")
+		src_s = pypacker.get_property_mac("src")
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		seq = property(_get_seq, _set_seq)
+
+		def _dissect(self, buf):
+			self.params(buf[20:], IEEE80211._unpack_ies)
+			return len(buf)
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class ProbeResp(Beacon):
+		pass
+
+	class AssocReq(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("bssid", "6s", b"\x00" * 6),
+			("seq_frag", "H", 0),
+			("capa", "H", 0),
+			("interval", "H", 0),
+			("params", None, triggerlist.TriggerList)
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		bssid_s = pypacker.get_property_mac("bssid")
+		src_s = pypacker.get_property_mac("src")
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		seq = property(_get_seq, _set_seq)
+
+		def _dissect(self, buf):
+			self.params(buf[24:], IEEE80211._unpack_ies)
+			return len(buf)
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class AssocResp(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("bssid", "6s", b"\x00" * 6),
+			("seq_frag", "H", 0),
+			("capa", "H", 0),
+			("status", "H", 0),
+			("aid", "H", 0),
+			("params", None, triggerlist.TriggerList)
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		bssid_s = pypacker.get_property_mac("bssid")
+		src_s = pypacker.get_property_mac("src")
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		seq = property(_get_seq, _set_seq)
+
+		def _dissect(self, buf):
+			self.params(buf[26:], IEEE80211._unpack_ies)
+			return len(buf)
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class Disassoc(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("bssid", "6s", b"\x00" * 6),
+			("seq_frag", "H", 0),
+			("reason", "H", 0),
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		bssid_s = pypacker.get_property_mac("bssid")
+		src_s = pypacker.get_property_mac("src")
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		seq = property(_get_seq, _set_seq)
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class ReassocReq(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("bssid", "6s", b"\x00" * 6),
+			("seq_frag", "H", 0),
+			("capa", "H", 0),
+			("interval", "H", 0),
+			("current_ap", "6s", b"\x00" * 6),
+			("params", None, triggerlist.TriggerList)
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		bssid_s = pypacker.get_property_mac("bssid")
+		src_s = pypacker.get_property_mac("src")
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		seq = property(_get_seq, _set_seq)
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+		def _dissect(self, buf):
+			self.params(buf[30:], IEEE80211._unpack_ies)
+			return len(buf)
+
+	class Auth(pypacker.Packet):
+		"""Authentication request."""
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("bssid", "6s", b"\x00" * 6),
+			("seq_frag", "H", 0),
+			("algo", "H", 0),
+			("authseq", "H", 0x0100),
+			("status", "H", 0)
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		bssid_s = pypacker.get_property_mac("bssid")
+		src_s = pypacker.get_property_mac("src")
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		seq = property(_get_seq, _set_seq)
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class Deauth(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\xff" * 6),
+			("src", "6s", b"\x00" * 6),
+			("bssid", "6s", b"\xff" * 6),
+			("seq_frag", "H", 0),
+			("reason", "H", 0x0700)  # class 3 frame received from non associated client
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		bssid_s = pypacker.get_property_mac("bssid")
+		src_s = pypacker.get_property_mac("src")
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		seq = property(_get_seq, _set_seq)
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	m_decoder = {
+		M_BEACON: Beacon,
+		M_ACTION: Action,
+		M_ASSOC_REQ: AssocReq,
+		M_ASSOC_RESP: AssocResp,
+		M_DISASSOC: Disassoc,
+		M_REASSOC_REQ: ReassocReq,
+		M_REASSOC_RESP: AssocResp,
+		M_AUTH: Auth,
+		M_PROBE_REQ: ProbeReq,
+		M_PROBE_RESP: ProbeResp,
+		M_DEAUTH: Deauth
+	}
+
+	#
+	# Control frames: no need for extra layer: 802.11 Base data is enough
+	#
+
+	class RTS(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6)
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		src_s = pypacker.get_property_mac("src")
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class CTS(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+
+	class ACK(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+
+	class BlockAckReq(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("reqctrl", "H", 0),
+			("seq", "H", 0)
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		src_s = pypacker.get_property_mac("src")
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class BlockAck(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+			("reqctrl", "H", 0),
+			("seq", "H", 0),
+			("bitmap", "Q", 0)
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		src_s = pypacker.get_property_mac("src")
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	class CFEnd(pypacker.Packet):
+		__hdr__ = (
+			("dst", "6s", b"\x00" * 6),
+			("src", "6s", b"\x00" * 6),
+		)
+
+		dst_s = pypacker.get_property_mac("dst")
+		src_s = pypacker.get_property_mac("src")
+
+		def reverse_address(self):
+			self.dst, self.src = self.src, self.dst
+
+	c_decoder = {
+		C_RTS: RTS,
+		C_CTS: CTS,
+		C_ACK: ACK,
+		C_BLOCK_ACK_REQ: BlockAckReq,
+		C_BLOCK_ACK: BlockAck,
+		C_CF_END: CFEnd
+	}
+
+	#
+	# Data frames
+	#
+	class Dataframe(pypacker.Packet):
+		__hdr__ = (
+			("addr1", "6s", b"\x00" * 6),
+			("addr2", "6s", b"\x00" * 6),
+			("addr3", "6s", b"\x00" * 6),
+			("seq_frag", "H", 0),
+			("addr4", "6s", None),		# to/from-DS = 1
+			("qos_ctrl", "H", 0),		# QoS
+			("sec_param", "Q", 0)		# protected
+		)
+
+		def _get_seq(self):
+			return (self.seq_frag & 0xFF) << 4 | (self.seq_frag >> 12)
+
+		def _set_seq(self, val):
+			self.seq_frag = (val & 0xF) << 12 | (val & 0xFF0) >> 4 | (self.seq_frag & 0x0F00)
+
+		seq = property(_get_seq, _set_seq)
+
+		def reverse_address(self):
+			if self.from_to_ds == 0:
+				self.addr1, self.addr2 = self.addr2, self.addr1
+			elif self.from_to_ds == 1:
+				self.addr2, self.addr3 = self.addr3, self.addr2
+			elif self.from_to_ds == 2:
+				self.addr1, self.addr3 = self.addr3, self.addr1
+
+		def _get_from_to_ds(self):
+			try:
+				return self._lower_layer.from_to_ds
+			except:
+				return self._from_to_ds
+
+		_from_to_ds = 0
+
+		def _set_from_to_ds(self, value):
+			try:
+				self._lower_layer.from_to_ds = value
+			except:
+				self._from_to_ds = value
+
+		# Same property structure as in IEEE80211 class
+		from_to_ds = property(_get_from_to_ds, _set_from_to_ds)
+
+		def __get_src(self):
+			return self.addr2 if self.from_to_ds in [0, 1] else self.addr3
+
+		def __set_src(self, src):
+			if self.from_to_ds in [0, 1]:
+				self.addr2 = src
+			else:
+				self.addr3 = src
+
+		def __get_dst(self):
+			return self.addr1 if self.from_to_ds in [0, 2] else self.addr3
+
+		def __set_dst(self, dst):
+			if self.from_to_ds in [0, 2]:
+				self.addr1 = dst
+			else:
+				self.addr3 = dst
+
+		def __get_bssid(self):
+			dstype = self.from_to_ds
+
+			if dstype == 0:
+				return self.addr3
+			if dstype == 1:
+				return self.addr1
+			if dstype == 2:
+				return self.addr2
+
+			return None
+
+		def __set_bssid(self, bssid):
+			dstype = self.from_to_ds
+
+			if dstype == 0:
+				self.addr3 = bssid
+			elif dstype == 1:
+				self.addr1 = bssid
+			elif dstype == 2:
+				self.addr2 = bssid
+
+		src = property(__get_src, __set_src)
+		src_s = pypacker.get_property_mac("src")
+		dst = property(__get_dst, __set_dst)
+		dst_s = pypacker.get_property_mac("dst")
+		bssid = property(__get_bssid, __set_bssid)
+		bssid_s = pypacker.get_property_mac("bssid")
+
+		__QOS_SUBTYPES = {8, 9, 10, 11, 12, 14, 15}
+
+		def _dissect(self, buf):
+			# logger.debug("starting dissecting, buflen: %r" % str(buf))
+			header_len = 30
+
+			"""
+			DataFrames need special care: there are too many types of field combinations
+			to create classes for every one. Solution: initiate by taking from_to_ds of lower_layer
+			In order to use "src/dst/bssid" instead of addrX set from_to_ds
+			to one of the following values:
+
+			[Bit 0: from DS][Bit 1: to DS] = [order of fields]
+
+			00b = 0 = dst, src, bssid
+			01b = 1 = bssid, src, dst
+			10b = 2 = dst, bssid, src
+			11b = 3 = RA, TA, DA, SA
+			"""
+			if self._lower_layer.__class__ == IEEE80211:
+				is_qos = self._lower_layer.subtype in IEEE80211.Dataframe.__QOS_SUBTYPES
+				is_protected = self._lower_layer.protected == 1
+				is_bridge = self._lower_layer.from_ds == 1 and self._lower_layer.to_ds == 1
+			else:
+				# Default is fromds
+				is_qos = False
+				is_protected = False
+				is_bridge = False
+
+			# logger.debug("switching fields1")
+			if not is_qos:
+				self.qos_ctrl = None
+				header_len -= 2
+			# logger.debug("switching fields2")
+			if not is_protected:
+				self.sec_param = None
+				header_len -= 8
+			# logger.debug("switching fields3")
+			if is_bridge:
+				self.addr4 = b"\x00" * 6
+				header_len += 6
+			# logger.debug("format/length/len(bin): %s/%d/%d" % (self._hdr_fmtstr, self.hdr_len, len(self.bin())))
+			# logger.debug("%r" % self)
+			return header_len
+
+	d_decoder = {
+		D_NORMAL: Dataframe,
+		D_DATA_CF_ACK: Dataframe,
+		D_DATA_CF_POLL: Dataframe,
+		D_DATA_CF_ACK_POLL: Dataframe,
+		D_NULL: Dataframe,
+		D_CF_ACK: Dataframe,
+		D_CF_POLL: Dataframe,
+		D_CF_ACK_POLL: Dataframe,
+		D_QOS_DATA: Dataframe,
+		D_QOS_CF_ACK: Dataframe,
+		D_QOS_CF_POLL: Dataframe,
+		D_QOS_CF_ACK_POLL: Dataframe,
+		D_QOS_NULL: Dataframe,
+		D_QOS_CF_POLL_EMPTY: Dataframe
+	}
+
+	#
+	# IEs for Mgmt-Frames
+	#
+	@staticmethod
+	def _unpack_ies(buf):
+		"""Parse IEs and return them as Triggerlist."""
+		# each IE starts with an ID and a length
+		ies = []
+		off = 0
+		buflen = len(buf)
+
+		while off + 2 < buflen:
+			ie_id = buf[off]
+			try:
+				parser = IEEE80211.ie_decoder[ie_id]
+			except KeyError:
+				# some unknown tag, use standard format
+				parser = IEEE80211.IE
+
+			dlen = buf[off + 1]
+			#logger.debug("IE parser is: %d = %s = %s" % (ie_id, parser, buf[off: off+2+dlen]))
+			try:
+				ie = parser(buf[off: off + 2 + dlen])
+				ies.append(ie)
+			except:
+				# Not enough bytes for handler, add raw bytes
+				ies.append(buf[off: off + 2 + dlen])
+			off += 2 + dlen
+
+		return ies
+
+	class IE(pypacker.Packet):
+		__hdr__ = (
+			("id", "B", 0),
+			("len", "B", 0)
+		)
+
+	class FH(pypacker.Packet):
+		__hdr__ = (
+			("id", "B", 0),
+			("len", "B", 0),
+			("tu", "H", 0),
+			("hopset", "B", 0),
+			("hoppattern", "B", 0),
+			("hopindex", "B", 0)
+		)
+
+	class DS(pypacker.Packet):
+		__hdr__ = (
+			("id", "B", 0),
+			("len", "B", 0),
+			("ch", "B", 0)
+		)
+
+	class CF(pypacker.Packet):
+		__hdr__ = (
+			("id", "B", 0),
+			("len", "B", 0),
+			("count", "B", 0),
+			("period", "B", 0),
+			("max", "H", 0),
+			("dur", "H", 0)
+		)
+
+	class TIM(pypacker.Packet):
+		__hdr__ = (
+			("id", "B", 0),
+			("len", "B", 0),
+			("count", "B", 0),
+			("period", "B", 0),
+			("ctrl", "H", 0)
+		)
+
+	class IBSS(pypacker.Packet):
+		__hdr__ = (
+			("id", "B", 0),
+			("len", "B", 0),
+			("atim", "H", 0)
+		)
+
+	# IEs
+	IE_SSID			= 0
+	IE_RATES		= 1
+	IE_FH			= 2
+	IE_DS			= 3
+	IE_CF			= 4
+	IE_TIM			= 5
+	IE_IBSS			= 6
+	IE_HT_CAPA		= 45
+	IE_ESR			= 50
+	IE_HT_INFO		= 61
+
+	ie_decoder = {
+		IE_SSID: IE,
+		IE_RATES: IE,
+		IE_FH: FH,
+		IE_DS: DS,
+		IE_CF: CF,
+		IE_TIM: TIM,
+		IE_IBSS: IBSS,
+		IE_HT_CAPA: IE,
+		IE_ESR: IE,
+		IE_HT_INFO: IE
+	}
+
