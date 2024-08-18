@@ -7867,3 +7867,2679 @@ class IEEE80211(pypacker.Packet):
 		IE_HT_INFO: IE
 	}
 
+
+# Handler for IEEE80211
+# position in list = type-ID
+dicts			= [IEEE80211.m_decoder, IEEE80211.c_decoder, IEEE80211.d_decoder]
+decoder_dict_complete	= {}
+
+for pos, decoder_dict in enumerate(dicts):
+	for key_decoder, val_decoder in decoder_dict.items():
+		# Same subtype-ID for different type-IDs, distinguish via "type_factor + subtype"
+		# Not doing so would lead to eg: type:0 + subtype:1 == type:1 + subtype:0
+		decoder_dict_complete[TYPE_FACTORS[pos] + key_decoder] = val_decoder
+
+pypacker.Packet.load_handler(IEEE80211, decoder_dict_complete)
+
+# Handler for Action
+CATEGORY_BLOCK_ACK_FACTOR = IEEE80211.Action.CATEGORY_BLOCK_ACK * 4
+pypacker.Packet.load_handler(IEEE80211.Action,
+	{
+		CATEGORY_BLOCK_ACK_FACTOR + IEEE80211.Action.CODE_BLOCK_ACK_REQUEST: IEEE80211.Action.BlockAckRequest,
+		CATEGORY_BLOCK_ACK_FACTOR + IEEE80211.Action.CODE_BLOCK_ACK_RESPONSE: IEEE80211.Action.BlockAckResponse
+	}
+)
+
+"""Internet Group Management Protocol."""
+
+
+
+class IGMP(pypacker.Packet):
+	__hdr__ = (
+		("type", "B", 0),
+		("maxresp", "B", 0),
+		("sum", "H", 0, FIELD_FLAG_AUTOUPDATE),
+		("group", "4s", b"\x00" * 4)
+	)
+
+	# Convenient access for: group[_s]
+	group_s = pypacker.get_property_ip4("group")
+
+	def _update_fields(self):
+		if self.sum_au_active and self._changed():
+			self.sum = 0
+			self.sum = checksum.in_cksum(pypacker.Packet.bin(self))
+
+"""
+Proof-of-concept Dshell plugin to detect INNUENDO DNS Channel
+
+Based on the short marketing video (http://vimeo.com/115206626) the
+INNUENDO DNS Channel relies on DNS to communicate with an authoritative
+name server. The name server will respond with a base64 encoded TXT
+answer. This plugin will analyze DNS TXT queries and responses to
+determine if it matches the network traffic described in the video.
+There are multiple assumptions (*very poor*) in this detection plugin
+but serves as a proof-of-concept detector. This detector has not been
+tested against authentic INNUENDO DNS Channel traffic.
+"""
+
+
+class DshellPlugin(DNSPlugin):
+    """
+    Proof-of-concept Dshell plugin to detect INNUENDO DNS Channel
+
+    Usage: decode -d innuendo *.pcap
+    """
+
+    def __init__(self):
+        super().__init__(
+            name="innuendo-dns",
+            description="proof-of-concept detector for INNUENDO DNS channel",
+            bpf="port 53",
+            author="primalsec",
+            output=AlertOutput(label=__name__),
+        )
+
+    def dns_handler(self, conn, requests, responses):
+        response = responses[-1]
+
+        query = None
+        answers = []
+
+        if requests:
+            request = requests[-1].pkt.highest_layer
+            query = request.queries[-1]
+            # DNS Question, extract query name if it is a TXT record request
+            if query.type == dns.DNS_TXT:
+                query = query.name_s
+
+        if responses:
+            for response in responses:
+                rcode = response.rcode
+                response = response.pkt.highest_layer
+                # DNS Answer with data and no errors
+                if rcode == dns.DNS_RCODE_NOERR and response.answers:
+                    for answer in response.answers:
+                        if answer.type == dns.DNS_TXT:
+                            answers.append(answer.address)
+
+        if query and answers:
+            # assumption: INNUENDO will use the lowest level domain for C2
+            # example: AAAABBBBCCCC.foo.bar.com -> AAAABBBBCCCC is the INNUENDO
+            # data
+            subdomain = query.split('.', 1)[0]
+
+            # weak test based on video observation *very poor assumption*
+            if subdomain.isupper():
+                # check each answer in the TXT response
+                for answer in answers:
+                    try:
+                        # INNUENDO DNS channel base64 encodes the response, check to see if
+                        # it contains a valid base64 string  *poor assumption*
+                        dummy = base64.b64decode(answer)
+
+                        self.write('INNUENDO DNS Channel', query, '/', answer, **conn.info())
+
+                        # here would be a good place to decrypt the payload (if you have the keys)
+                        # decrypt_payload( answer )
+                    except:
+                        return None
+                return conn, requests, responses
+
+        return None
+
+"""
+Parse traffic to detect scanners based on connection to IPs that are rarely touched by others
+"""
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+
+    def __init__(self):
+        super().__init__(
+            name='parse indegree',
+            description='Parse traffic to detect scanners based on connection to IPs that are rarely touched by others',
+            bpf='(tcp or udp)',
+            author='dev195',
+        )
+        self.client_conns = {}
+        self.server_conns = {}
+        self.minhits = 3
+
+    def connection_handler(self, conn):
+        self.client_conns.setdefault(conn.clientip, set())
+        self.server_conns.setdefault(conn.serverip, set())
+
+        self.client_conns[conn.clientip].add(conn.serverip)
+        self.server_conns[conn.serverip].add(conn.clientip)
+
+    def postfile(self):
+        for clientip, serverips in self.client_conns.items():
+            target_count = len(serverips)
+            S = min((len(self.server_conns[serverip]) for serverip in serverips))
+            if S > 2 or target_count < 5:
+                continue
+            # TODO implement whitelist
+            self.write("Scanning IP: {} / S score: {:.1f} / Number of records: {}".format(clientip, S, target_count))
+
+"""Shared constants for IPv4 and IPv6."""
+
+# Protocol numbers - http://www.iana.org/assignments/protocol-numbers
+IP_PROTO_IP		= 0			# dummy for IP
+IP_PROTO_HOPOPTS	= IP_PROTO_IP		# IPv6 hop-by-hop options
+IP_PROTO_ICMP		= 1			# ICMP
+IP_PROTO_IGMP		= 2			# IGMP
+IP_PROTO_GGP		= 3			# gateway-gateway protocol
+IP_PROTO_IPIP		= 4			# IP in IP
+IP_PROTO_ST		= 5			# ST datagram mode
+IP_PROTO_TCP		= 6			# TCP
+IP_PROTO_CBT		= 7			# CBT
+IP_PROTO_EGP		= 8			# exterior gateway protocol
+IP_PROTO_IGP		= 9			# interior gateway protocol
+IP_PROTO_BBNRCC		= 10			# BBN RCC monitoring
+IP_PROTO_NVP		= 11			# Network Voice Protocol
+IP_PROTO_PUP		= 12			# PARC universal packet
+IP_PROTO_ARGUS		= 13			# ARGUS
+IP_PROTO_EMCON		= 14			# EMCON
+IP_PROTO_XNET		= 15			# Cross Net Debugger
+IP_PROTO_CHAOS		= 16			# Chaos
+IP_PROTO_UDP		= 17			# UDP
+IP_PROTO_MUX		= 18			# multiplexing
+IP_PROTO_DCNMEAS	= 19			# DCN measurement
+IP_PROTO_HMP		= 20			# Host Monitoring Protocol
+IP_PROTO_PRM		= 21			# Packet Radio Measurement
+IP_PROTO_IDP		= 22			# Xerox NS IDP
+IP_PROTO_TRUNK1		= 23			# Trunk-1
+IP_PROTO_TRUNK2		= 24			# Trunk-2
+IP_PROTO_LEAF1		= 25			# Leaf-1
+IP_PROTO_LEAF2		= 26			# Leaf-2
+IP_PROTO_RDP		= 27			# "Reliable Datagram" proto
+IP_PROTO_IRTP		= 28			# Inet Reliable Transaction
+IP_PROTO_TP		= 29			# ISO TP class 4
+IP_PROTO_NETBLT		= 30			# Bulk Data Transfer
+IP_PROTO_MFPNSP		= 31			# MFE Network Services
+IP_PROTO_MERITINP	= 32			# Merit Internodal Protocol
+IP_PROTO_SEP		= 33			# Sequential Exchange proto
+IP_PROTO_3PC		= 34			# Third Party Connect proto
+IP_PROTO_IDPR		= 35			# Interdomain Policy Route
+IP_PROTO_XTP		= 36			# Xpress Transfer Protocol
+IP_PROTO_DDP		= 37			# Datagram Delivery Proto
+IP_PROTO_CMTP		= 38			# IDPR Ctrl Message Trans
+IP_PROTO_TPPP		= 39			# TP++ Transport Protocol
+IP_PROTO_IL		= 40			# IL Transport Protocol
+IP_PROTO_IP6		= 41			# IPv6
+IP_PROTO_SDRP		= 42			# Source Demand Routing
+IP_PROTO_ROUTING	= 43			# IPv6 routing header
+IP_PROTO_FRAGMENT	= 44			# IPv6 fragmentation header
+IP_PROTO_RSVP		= 46			# Reservation protocol
+IP_PROTO_GRE		= 47			# General Routing Encap
+IP_PROTO_MHRP		= 48			# Mobile Host Routing
+IP_PROTO_ENA		= 49			# ENA
+IP_PROTO_ESP		= 50			# Encap Security Payload
+IP_PROTO_AH		= 51			# Authentication Header
+IP_PROTO_INLSP		= 52			# Integated Net Layer Sec
+IP_PROTO_SWIPE		= 53			# SWIPE
+IP_PROTO_NARP		= 54			# NBMA Address Resolution
+IP_PROTO_MOBILE		= 55			# Mobile IP, RFC 2004
+IP_PROTO_TLSP		= 56			# Transport Layer Security
+IP_PROTO_SKIP		= 57			# SKIP
+IP_PROTO_ICMP6		= 58			# ICMP for IPv6
+IP_PROTO_NONE		= 59			# IPv6 no next header
+IP_PROTO_DSTOPTS	= 60			# IPv6 destination Woptions
+IP_PROTO_ANYHOST	= 61			# any host internal proto
+IP_PROTO_CFTP		= 62			# CFTP
+IP_PROTO_ANYNET		= 63			# any local network
+IP_PROTO_EXPAK		= 64			# SATNET and Backroom EXPAK
+IP_PROTO_KRYPTOLAN	= 65			# Kryptolan
+IP_PROTO_RVD		= 66			# MIT Remote Virtual Disk
+IP_PROTO_IPPC		= 67			# Inet Pluribus Packet Core
+IP_PROTO_DISTFS		= 68			# any distributed fs
+IP_PROTO_SATMON		= 69			# SATNET Monitoring
+IP_PROTO_VISA		= 70			# VISA Protocol
+IP_PROTO_IPCV		= 71			# Inet Packet Core Utility
+IP_PROTO_CPNX		= 72			# Comp Proto Net Executive
+IP_PROTO_CPHB		= 73			# Comp Protocol Heart Beat
+IP_PROTO_WSN		= 74			# Wang Span Network
+IP_PROTO_PVP		= 75			# Packet Video Protocol
+IP_PROTO_BRSATMON	= 76			# Backroom SATNET Monitor
+IP_PROTO_SUNND		= 77			# SUN ND Protocol
+IP_PROTO_WBMON		= 78			# WIDEBAND Monitoring
+IP_PROTO_WBEXPAK	= 79			# WIDEBAND EXPAK
+IP_PROTO_EON		= 80			# ISO CNLP
+IP_PROTO_VMTP		= 81			# Versatile Msg Transport
+IP_PROTO_SVMTP		= 82			# Secure VMTP
+IP_PROTO_VINES		= 83			# VINES
+IP_PROTO_TTP		= 84			# TTP
+IP_PROTO_NSFIGP		= 85			# NSFNET-IGP
+IP_PROTO_DGP		= 86			# Dissimilar Gateway Proto
+IP_PROTO_TCF		= 87			# TCF
+IP_PROTO_EIGRP		= 88			# EIGRP
+IP_PROTO_OSPF		= 89			# Open Shortest Path First
+IP_PROTO_SPRITERPC	= 90			# Sprite RPC Protocol
+IP_PROTO_LARP		= 91			# Locus Address Resolution
+IP_PROTO_MTP		= 92			# Multicast Transport Proto
+IP_PROTO_AX25		= 93			# AX.25 Frames
+IP_PROTO_IPIPENCAP	= 94			# yet-another IP encap
+IP_PROTO_MICP		= 95			# Mobile Internet Ctrl
+IP_PROTO_SCCSP		= 96			# Semaphore Comm Sec Proto
+IP_PROTO_ETHERIP	= 97			# Ethernet in IPv4
+IP_PROTO_ENCAP		= 98			# encapsulation header
+IP_PROTO_ANYENC		= 99			# private encryption scheme
+IP_PROTO_GMTP		= 100			# GMTP
+IP_PROTO_IFMP		= 101			# Ipsilon Flow Mgmt Proto
+IP_PROTO_PNNI		= 102			# PNNI over IP
+IP_PROTO_PIM		= 103			# Protocol Indep Multicast
+IP_PROTO_ARIS		= 104			# ARIS
+IP_PROTO_SCPS		= 105			# SCPS
+IP_PROTO_QNX		= 106			# QNX
+IP_PROTO_AN		= 107			# Active Networks
+IP_PROTO_IPCOMP		= 108			# IP Payload Compression
+IP_PROTO_SNP		= 109			# Sitara Networks Protocol
+IP_PROTO_COMPAQPEER	= 110			# Compaq Peer Protocol
+IP_PROTO_IPXIP		= 111			# IPX in IP
+IP_PROTO_VRRP		= 112			# Virtual Router Redundancy
+IP_PROTO_PGM		= 113			# PGM Reliable Transport
+IP_PROTO_ANY0HOP	= 114			# 0-hop protocol
+IP_PROTO_L2TP		= 115			# Layer 2 Tunneling Proto
+IP_PROTO_DDX		= 116			# D-II Data Exchange (DDX)
+IP_PROTO_IATP		= 117			# Interactive Agent Xfer
+IP_PROTO_STP		= 118			# Schedule Transfer Proto
+IP_PROTO_SRP		= 119			# SpectraLink Radio Proto
+IP_PROTO_UTI		= 120			# UTI
+IP_PROTO_SMP		= 121			# Simple Message Protocol
+IP_PROTO_SM		= 122			# SM
+IP_PROTO_PTP		= 123			# Performance Transparency
+IP_PROTO_ISIS		= 124			# ISIS over IPv4
+IP_PROTO_FIRE		= 125			# FIRE
+IP_PROTO_CRTP		= 126			# Combat Radio Transport
+IP_PROTO_CRUDP		= 127			# Combat Radio UDP
+IP_PROTO_SSCOPMCE	= 128			# SSCOPMCE
+IP_PROTO_IPLT		= 129			# IPLT
+IP_PROTO_SPS		= 130			# Secure Packet Shield
+IP_PROTO_PIPE		= 131			# Private IP Encap in IP
+IP_PROTO_SCTP		= 132			# Stream Ctrl Transmission
+IP_PROTO_FC		= 133			# Fibre Channel
+IP_PROTO_RSVPIGN	= 134			# RSVP-E2E-IGNORE
+IP_PROTO_RAW		= 255			# Raw IP packets
+IP_PROTO_RESERVED	= IP_PROTO_RAW		# Reserved
+IP_PROTO_MAX		= 255
+
+"""
+Outputs all IPv4/IPv6 traffic, and hex plus ascii with verbose flag
+"""
+
+
+
+logger = logging.getLogger("pypacker")
+
+
+class DshellPlugin(dshell.core.PacketPlugin):
+
+    def __init__(self):
+        super().__init__(
+            name='ip',
+            description='IPv4/IPv6 plugin',
+            bpf='ip or ip6',
+            author='twp',
+            output=AlertOutput(label=__name__),
+        )
+
+    def packet_handler(self, packet):
+        self.write(**packet.info(), dir_arrow='->')
+        # If verbose flag set, outputs packet contents in hex and ascii alongside packet info
+        self.logger.info("\n" + dshell.util.hex_plus_ascii(packet.rawpkt))
+        return packet
+
+
+"""
+Internet Protocol version 4.
+
+RFC 791
+"""
+
+logger = logging.getLogger("pypacker")
+
+# avoid references for performance reasons
+in_cksum = checksum.in_cksum
+
+# IP options
+# http://www.iana.org/assignments/ip-parameters/ip-parameters.xml
+IP_OPT_EOOL			= 0
+IP_OPT_NOP			= 1
+IP_OPT_SEC			= 2
+IP_OPT_LSR			= 3
+IP_OPT_TS			= 4
+IP_OPT_ESEC			= 5
+IP_OPT_CIPSO			= 6
+IP_OPT_RR			= 7
+IP_OPT_SID			= 8
+IP_OPT_SSR			= 9
+IP_OPT_ZSU			= 10
+IP_OPT_MTUP			= 11
+IP_OPT_MTUR			= 12
+IP_OPT_FINN			= 13
+IP_OPT_VISA			= 14
+IP_OPT_ENCODE			= 15
+IP_OPT_IMITD			= 16
+IP_OPT_EIP			= 17
+IP_OPT_TR			= 18
+IP_OPT_ADDEXT			= 19
+IP_OPT_RTRALT			= 20
+IP_OPT_SDB			= 21
+IP_OPT_UNASSGNIED		= 22
+IP_OPT_DPS			= 23
+IP_OPT_UMP			= 24
+IP_OPT_QS			= 25
+IP_OPT_EXP			= 30
+
+
+# Type of service, RFC 1349 ("obsoleted by RFC 2474")
+IP_TOS_DEFAULT			= 0x00			# default
+IP_TOS_LOWDELAY			= 0x10			# low delay
+IP_TOS_THROUGHPUT		= 0x08			# high throughput
+IP_TOS_RELIABILITY		= 0x04			# high reliability
+IP_TOS_LOWCOST			= 0x02			# low monetary cost - XXX
+IP_TOS_ECT			= 0x02			# ECN-capable transport
+IP_TOS_CE			= 0x01			# congestion experienced
+
+# IP precedence
+IP_TOS_PREC_ROUTINE		= 0x00
+IP_TOS_PREC_PRIORITY		= 0x20
+IP_TOS_PREC_IMMEDIATE		= 0x40
+IP_TOS_PREC_FLASH		= 0x60
+IP_TOS_PREC_FLASHOVERRIDE	= 0x80
+IP_TOS_PREC_CRITIC_ECP		= 0xA0
+IP_TOS_PREC_INTERNETCONTROL	= 0xC0
+IP_TOS_PREC_NETCONTROL		= 0xE0
+
+# Fragmentation flags (ip_off)
+IP_FRAG_RESERVED		= 0x4			# reserved
+IP_FRAG_DONT			= 0x2			# don't fragment
+IP_FRAG_MORE			= 0x1			# more fragments (not last frag)
+
+# Time-to-live (ip_ttl), seconds
+IP_TTL_DEFAULT			= 64			# default ttl, RFC 1122, RFC 1340
+IP_TTL_MAX			= 255			# maximum ttl
+
+
+class IP(pypacker.Packet):
+	# version
+	def __get_v(self):
+		return self.v_hl >> 4
+
+	def __set_v(self, value):
+		self.v_hl = (value << 4) | (self.v_hl & 0xF)
+	v = property(__get_v, __set_v)
+
+	# Header length
+	def __get_hl(self):
+		return self.v_hl & 0x0F
+
+	def __set_hl(self, value):
+		self.v_hl = (self.v_hl & 0xF0) | value
+	hl = property(__get_hl, __set_hl)
+
+	def __get_flags(self):
+		return (self.frag_off & 0xE000) >> 13
+
+	def __set_flags(self, value):
+		self.frag_off = (self.frag_off & ~0xE000) | (value << 13)
+	fragment = property(__get_flags, __set_flags)
+
+	def __get_offset(self):
+		return self.frag_off & ~0xE000
+
+	def __set_offset(self, value):
+		self.frag_off = (self.frag_off & 0xE000) | value
+	offset = property(__get_offset, __set_offset)
+
+	def __get_dscp(self):
+		return (self.tos & 0xFC) >> 2
+
+	def __set_dscp(self, value):
+		self.tos = (value << 2) | ((~0xFC) & self.tos)
+	# Diff Services Codepoint
+	dscp = property(__get_dscp, __set_dscp)
+
+	def __get_ecn(self):
+		return self.tos & 0x03
+
+	def __set_ecn(self, value):
+		self.tos = (self.tos & 0xFC) | value
+	# Explicit Congestion Notification
+	ecn = property(__get_ecn, __set_ecn)
+
+	__hdr__ = (
+		("v_hl", "B", 69, FIELD_FLAG_AUTOUPDATE, ((v, 0, 3), (hl, 4, 7))),  # = 0x45, hl = Header length (=hl*4 bytes)
+		("tos", "B", 0, None, ((dscp, 0, 5), (ecn, 6, 7))),
+		("len", "H", 20, FIELD_FLAG_AUTOUPDATE),  # Header + data length
+		("id", "H", 0),
+		("frag_off", "H", 0, None, ((fragment, 0, 2), (offset, 3, 15))),
+		("ttl", "B", 64),
+		("p", "B", IP_PROTO_TCP, FIELD_FLAG_IS_TYPEFIELD),
+		("sum", "H", 0, FIELD_FLAG_AUTOUPDATE),
+		("src", "4s", b"\x00" * 4),
+		("dst", "4s", b"\x00" * 4),
+		("opts", None, triggerlist.TriggerList)
+	)
+
+	__handler__ = {
+		IP_PROTO_ICMP: icmp.ICMP,
+		IP_PROTO_IGMP: igmp.IGMP,
+		IP_PROTO_TCP: tcp.TCP,
+		IP_PROTO_UDP: udp.UDP,
+		IP_PROTO_IP6: ip6.IP6,
+		IP_PROTO_ESP: esp.ESP,
+		IP_PROTO_PIM: pim.PIM,
+		IP_PROTO_IPXIP: ipx.IPX,
+		IP_PROTO_SCTP: sctp.SCTP,
+		IP_PROTO_OSPF: ospf.OSPF
+	}
+
+	__update_dependants__ = {tcp.TCP, udp.UDP}
+
+	def create_fragments(self, fragment_len=1480):
+		"""
+		Create fragment packets from this IP packet with max fragment_len bytes each.
+		This will set the flags and offset values accordingly (see header field off).
+
+		fragment_len -- max length of a fragment (IP header + payload)
+		return -- fragment IP packets created from this packet
+		"""
+		if fragment_len % 8 != 0:
+			raise Exception("fragment_len not multipe of 8 bytes: %r" % fragment_len)
+
+		fragments = []
+		length_ip_total = len(self.bin())
+		payload = self.body_bytes
+		length_ip_header = length_ip_total - len(payload)
+		length_payload = length_ip_total - length_ip_header
+
+		off = 0
+
+		while off < length_payload:
+			payload_sub = payload[off: off + fragment_len]
+
+			ip_frag = IP(id=self.id, p=self.p, src=self.src, dst=self.dst)
+
+			if length_payload - off > fragment_len:
+				# More fragments follow
+				ip_frag.flags = 0x1
+			else:
+				# Last fragment
+				ip_frag.flags = 0x0
+
+			ip_frag.offset = int(off / 8)
+			ip_frag.body_bytes = payload_sub
+			fragments.append(ip_frag)
+			off += fragment_len
+
+		return fragments
+
+	# Convenient access for: src[_s], dst[_s]
+	src_s = pypacker.get_property_ip4("src")
+	dst_s = pypacker.get_property_ip4("dst")
+	p_t = pypacker.get_property_translator("p", "IP_PROTO_")
+	dscp_t = pypacker.get_property_translator("dscp", "IP_TOS_PREC_")
+	fragment_t = pypacker.get_property_translator("fragment", "IP_FRAG")
+
+	class IPOptSingle(pypacker.Packet):
+		__hdr__ = (
+			("type", "B", 0),
+		)
+
+		type_t = pypacker.get_property_translator("type", "IP_OPT_")
+
+	class IPOptMulti(pypacker.Packet):
+		"""
+		len = total length (header + data)
+		"""
+		__hdr__ = (
+			("type", "B", 0),
+			("len", "B", 2),
+		)
+
+		type_t = pypacker.get_property_translator("type", "IP_OPT_")
+
+		def _update_fields(self):
+			self.len = len(self)
+
+	def _dissect(self, buf):
+		# 4 bits that specify the number of 32-bit words in the header
+		total_header_length = (buf[0] & 0xF) << 2
+		#logger.debug("Total length: %d" % total_header_length)
+		options_length = total_header_length - 20  # total IHL - standard IP-len = options length
+
+		#logger.debug("Optlen: %d" % options_length)
+		if options_length > 0:
+			# logger.debug("got some IP options: %s" % tl_opts)
+			self.opts(buf[20: 20 + options_length], self._dissect_opts)
+		elif options_length < 0:
+			# Invalid header length: assume no options at all
+			raise Exception("Invalid options length: %d" % options_length)
+
+		# There are some cases where padding can not be identified on ethernet -> do it here (eg VSS shit trailer)
+		return total_header_length, buf[9]
+
+	__IP_OPT_SINGLE = {IP_OPT_EOOL, IP_OPT_NOP}
+
+	@staticmethod
+	def _dissect_opts(buf):
+		"""Parse IP options and return them as list."""
+		optlist = []
+		i = 0
+		p = None
+
+		while i < len(buf):
+			#logger.debug("Dissecting IP-option type %s" % buf[i])
+			if buf[i] in IP.__IP_OPT_SINGLE:
+				p = IP.IPOptSingle(type=buf[i])
+				i += 1
+			else:
+				olen = buf[i + 1]
+				#logger.debug("IPOptMulti")
+				p = IP.IPOptMulti(type=buf[i], len=olen, body_bytes=buf[i + 2: i + olen])
+				#logger.debug("body bytes: %s" % buf[i + 2: i + olen])
+				i += olen		# typefield + lenfield + data-len
+				#logger.debug("IPOptMulti 2")
+			optlist.append(p)
+		return optlist
+
+	def _update_fields(self):
+		self._update_higherlayer_id()
+
+		if self.len_au_active:
+			self.len = len(self)
+		if self.v_hl_au_active:
+			# Update header length. NOTE: needs to be a multiple of 4 Bytes.
+			#logger.debug("Updating: %r" % self._packet)
+			# options length need to be multiple of 4 Bytes
+			self.hl = int(self.header_len / 4) & 0xF
+		if self.sum_au_active:
+			# Length changed so we have to recalculate checksum
+			# reset checksum for recalculation,  mark as changed / clear cache
+			self.sum = 0
+			#logger.debug("Calculating sum over %d bytes (%r), current: %0X" % (
+			#	len(self._pack_header()), self._pack_header(), self.sum))
+			self.sum = in_cksum(self._pack_header())
+			#logger.debug("Updated sum=%d, should be %0X" % (self.sum, in_cksum(self._pack_header())))
+
+	def direction(self, other):
+		# logger.debug("checking direction: %s<->%s" % (self, next))
+		direction = 0
+		if self.src == other.src and self.dst == other.dst:
+			direction |= pypacker.Packet.DIR_SAME
+		if self.src == other.dst and self.dst == other.src:
+			direction |= pypacker.Packet.DIR_REV
+		if direction == 0:
+			direction = pypacker.Packet.DIR_UNKNOWN
+		return direction
+
+	def reverse_address(self):
+		self.src, self.dst = self.dst, self.src
+
+"""
+Internet Printing Protocol (IPP)
+https://www.rfc-editor.org/rfc/rfc2911
+https://datatracker.ietf.org/doc/html/rfc2566
+https://datatracker.ietf.org/doc/html/rfc2565
+
+WARNING: may need HTTP reassemblation  before dissection
+"""
+
+
+"""
+>>> Printer attributes
+>> operations-supported
+
+0x0000              reserved, not used
+0x0001              reserved, not used
+0x0002              Print-Job
+0x0003              Print-URI
+0x0004              Validate-Job
+0x0005              Create-Job
+0x0006              Send-Document
+0x0007              Send-URI
+0x0008              Cancel-Job
+0x0009              Get-Job-Attributes
+0x000A              Get-Jobs
+0x000B              Get-Printer-Attributes
+0x000C              Hold-Job
+0x000D              Release-Job
+0x000E              Restart-Job
+0x000F              reserved for a future operation
+0x0010              Pause-Printer
+0x0011              Resume-Printer
+0x0012              Purge-Jobs
+0x0013-0x3FFF       reserved for future IETF standards track operations (see section 6.4)
+0x4000-0x8FFF       reserved for vendor extensions (see section 6.4)
+
+
+>>> Delimiter Tags
+The following table specifies the values for the delimiter tags:
+
+Tag Value (Hex)   Delimiter
+
+0x00              reserved
+0x01              operation-attributes-tag
+0x02              job-attributes-tag
+0x03              end-of-attributes-tag
+0x04              printer-attributes-tag
+0x05              unsupported-attributes-tag
+0x06-0x0E         reserved for future delimiters
+0x0F              reserved for future chunking-end-of-attributes-tag
+
+
+>> the order of these
+xxx-attributes-tags and xxx-attribute-sequences in the protocol MUST
+be the same as in the model document, but the order of attributes
+within each xxx-attribute-sequence MUST be unspecified
+
+
+Model Document Group           xxx-attributes-sequence
+---
+Operation Attributes           operations-attributes-sequence
+Job Template Attributes        job-attributes-sequence
+Job Object Attributes          job-attributes-sequence
+Unsupported Attributes         unsupported-attributes-sequence
+Requested Attributes           job-attributes-sequence
+Get-Job-Attributes)
+Requested Attributes           printer-attributes-sequence
+Get-Printer-Attributes)
+Document Content               in a special position as described above
+
+
+>>> Value Tags
+The following table specifies the integer values for the value-tag:
+
+Tag Value (Hex)  Meaning
+
+0x20             reserved
+0x21             integer
+0x22             boolean
+0x23             enum
+0x24-0x2F        reserved for future integer types
+
+0x30             octetString with an  unspecified format
+0x31             dateTime
+0x32             resolution
+0x33             rangeOfInteger
+0x34             reserved for collection (in the future)
+0x35             textWithLanguage
+0x36             nameWithLanguage
+0x37-0x3F        reserved for future octetString types
+
+0x40             reserved
+0x41             textWithoutLanguage
+0x42             nameWithoutLanguage
+0x43             reserved
+0x44             keyword
+0x45             uri
+0x46             uriScheme
+0x47             charset
+0x48             naturalLanguage
+
+0x49             mimeMediaType
+0x4A-0x5F        reserved for future character string types
+"""
+
+OPERATION_PRINTJOB			= 0x0002
+OPERATION_PRINTURI			= 0x0003
+OPERATION_VALIDATE_JOB			= 0x0004
+OPERATION_CREATE_JOB			= 0x0005
+OPERATION_GET_JOBS			= 0x000A
+OPERATION_GET_PRINTER_ATTRIBUTES	= 0x000B
+
+TAG_DEL_RESERVED		= 0x00
+TAG_DEL_OP_ATTR_TAG		= 0x01
+TAG_DEL_JOBATTR_TAG		= 0x02
+TAG_DEL_END_OF_ATTR		= 0x03
+TAG_DEL_PRINTER_ATTR_TAG	= 0x04
+TAG_DEL_UNSUPPORTED_ATTR_TAG	= 0x05
+#0x06-0x0E         reserved for future delimiters
+#0x0F              reserved for future chunking-end-of-attributes-tag
+
+TAGS_DELIMITER = {TAG_DEL_RESERVED, TAG_DEL_OP_ATTR_TAG, TAG_DEL_JOBATTR_TAG, TAG_DEL_END_OF_ATTR,
+	TAG_DEL_PRINTER_ATTR_TAG, TAG_DEL_UNSUPPORTED_ATTR_TAG}
+
+TAG_TYPE_BOOL			= 0x22
+TAG_TYPE_KEYWORD		= 0x44
+TAG_TYPE_URI			= 0x45
+TAG_TYPE_CHARSET		= 0x47
+TAG_TYPE_NAT_LANG		= 0x48
+TAG_TYPE_TEXT_LANG		= 0x35
+TAG_TYPE_NAME_LANG		= 0x36
+TAG_TYPE_TEXT_NO_LANG		= 0x41
+TAG_TYPE_NAME_NO_LANG		= 0x42
+TAG_TYPE_MEDIA_MIME		= 0x49
+
+"""
+HTTP example:
+POST / HTTP/1.1
+Content-Length: 161
+Content-Type: application/ipp
+Date: Wed, 1 Jan 2000 21:50:58 GMT
+Host: 1.2.3.4.1:631
+User-Agent: CUPS/1.2.3 (Linux; x86_64) IPP/2.0
+Expect: 100-continue
+
+...
+"""
+
+
+class IPPBase(pypacker.Packet):
+	class TypeNameContent(pypacker.Packet):
+		__hdr__ = (
+			("type", "B", 0),
+			("name_len", "H", 0, FIELD_FLAG_AUTOUPDATE),
+			("name", None, b""),
+			("content_len", "H", 0, FIELD_FLAG_AUTOUPDATE)
+		)
+
+		def _dissect(self, buf):
+			name_len = unpack_H(buf[1: 3])[0]
+			self.name = buf[3: 3 + name_len]
+			return 5 + name_len
+
+		def _update_fields(self):
+			if self._changed():
+				if self.name_len_au_active:
+					self.name_len = len(self.name)
+				if self.content_len_au_active:
+					self.content_len = len(self.body_bytes)
+
+	class Attribute(pypacker.Packet):
+		__hdr__ = (
+			("parameter", None, triggerlist.TriggerList),
+		)
+
+		def get_name(self):
+			# Avoid exception below
+			if len(self.parameter) == 0 or type(self.parameter[0]) != TypeNameContent:
+				return None
+
+			# Assume TypeNameContent is used
+			try:
+				return self.parameter[0].body_bytes
+			except:
+				return None
+
+	"""
+	Attribute example Structure:
+
+	//[operation-attributes-tag:1]
+	[value-tag:2]
+		name: [len:1][content:len]
+		value: [len:1][content:len]
+	[value-tag:2]
+		name: [len:1][content:len]
+		value: [len:1][content:len]
+		// Member of same parent value-tag as long name-len is 0
+		value:
+			[value-tag:2]
+			[name-len:1=0][name:name-len]
+			[len:1][content:len]
+	//[end-of-attributes-tag:1]
+	"""
+
+	@staticmethod
+	def dissect_attributes(only_offsets=False):
+		def dissect_attributes_sub(buf):
+			"""buf -- Start direct after operation-attributes-tag"""
+			#logger.debug("dissect_attributes_sub")
+			attributes = []
+			tncs = []
+			off = 0
+			value_tag = buf[off]
+			value_tag_new = None
+
+			while off < len(buf):
+				name_len = unpack_H(buf[off + 1: off + 1 + 2])[0] # type:1, len:2, value:len
+				content_len = unpack_H(buf[off + 1 + 2 + name_len: off + 1 + 2 + name_len + 2])[0]
+				off_new = off + 1 + 2 + name_len + 2 + content_len
+				#logger.debug(f"value_tag={value_tag:#x}, off={off}, name_len={name_len},
+				#	 content_len={content_len}, off_new={off_new}")
+
+				value_tag_new = None
+
+				if off_new < len(buf):
+					value_tag_new = buf[off_new]
+					#logger.debug(f"value_tag_new={value_tag_new:X}")
+
+				if not only_offsets:
+					tnc = IPPBase.TypeNameContent(buf[off: off_new])
+					tncs.append(tnc)
+
+					if value_tag_new != value_tag:
+						# End of Attribute reached, add all tncs
+						attribute = IPPBase.Attribute()
+						attribute.parameter.extend(tncs)
+						attributes.append(attribute)
+						tncs = []
+
+				off = off_new
+
+				if value_tag_new is None or value_tag_new in TAGS_DELIMITER:
+					break
+
+				value_tag = value_tag_new
+
+			return off if only_offsets else attributes
+
+		return dissect_attributes_sub
+
+
+class IPPRequest(IPPBase):
+	__hdr__ = (
+		("version", "H", 0x0200),
+		# The operation-attributes-tag MUST be the first tag delimiter, ...
+		("operation", "H", OPERATION_GET_PRINTER_ATTRIBUTES),
+		("req_id", "I", 1),
+
+		("op_attr_tag", "B", TAG_DEL_OP_ATTR_TAG),
+		("op_attr", None, triggerlist.TriggerList),
+
+		# If the client is not supplying any Job Template attributes in the request,
+		# the client SHOULD omit Group 2 rather than sending an empty group.
+		("template_attr_tag", "B", None),
+		("template_attr", None, triggerlist.TriggerList),
+
+		# ... and the end-of-attributes-tag MUST be the last tag delimiter.
+		("end_of_attribute_tag", "B", TAG_DEL_END_OF_ATTR),
+		# If the operation has a document-content group,
+		# the document data in that group MUST follow the end-of-attributes- tag.
+		# -> Set document as body bytes
+	)
+
+	def _dissect(self, buf):
+		#op_attr_len = dissect_attributes(only_offsets=True)(buf[9:])
+		self.op_attr(buf[9: -1], IPPBase.dissect_attributes())
+
+		return len(buf)
+
+
+RESPONSE_STATUS_OK	= 0
+
+
+class IPPResponse(IPPBase):
+	__hdr__ = (
+		("version", "H", 0x0200),
+		("status", "H", RESPONSE_STATUS_OK),
+		("req_id", "I", 1),
+		("op_attr_tag", "B", TAG_DEL_OP_ATTR_TAG),
+		("op_attr", None, triggerlist.TriggerList),
+		("printer_attr_tag", "B", TAG_DEL_PRINTER_ATTR_TAG),
+		("printer_attr", None, triggerlist.TriggerList),
+		("end_of_attribute_tag", "B", TAG_DEL_END_OF_ATTR),
+	)
+
+	def _dissect(self, buf):
+		off = 9
+		op_attr_len = dissect_attributes(only_offsets=True)(buf[off:])
+		#logger.debug(f"Response start 1: {buf[9: 20].tobytes()}, op_attr_len={op_attr_len}")
+		self.op_attr(buf[off: off + op_attr_len], dissect_attributes())
+		off += op_attr_len + 1
+		#logger.debug(f"op_attr_len={op_attr_len}")
+		printer_attr_len = dissect_attributes(only_offsets=True)(buf[off:])
+		#logger.debug(f"Response start 2: {buf[9 + op_attr_len: 9 + op_attr_len + 20].tobytes()}")
+		self.printer_attr(buf[off: off + printer_attr_len], dissect_attributes())
+
+		return len(buf)
+"""
+Internetwork Packet Exchange (proprietary protocol)
+
+https://www.novell.com/documentation/nw6p/?page=/documentation/nw6p/ipx_enu/data/hc1w6pvi.html
+https://de.wikipedia.org/wiki/Internetwork_Packet_Exchange
+"""
+
+
+IPX_HDR_LEN = 30
+
+
+class IPX(pypacker.Packet):
+	__hdr__ = (
+		("sum", "H", 0xFFFF),
+		("len", "H", IPX_HDR_LEN),
+		("tc", "B", 0),
+		("pt", "B", 0),
+		("dst", "12s", b""),
+		("src", "12s", b"")
+	)
+
+"""
+Packet interceptor using NFQueue
+
+Requirements:
+- CPython
+- NFQUEUE target support in Kernel
+- iptables
+"""
+
+logger = logging.getLogger("pypacker")
+
+MSG_NO_NFQUEUE = "Could not load netfilter_queue library. See README.md for interceptor requirements."
+
+netfilter = None # pylint: disable=invalid-name
+
+try:
+	# Load library
+	nflib = utils.find_library("netfilter_queue")
+
+	if nflib is None:
+		raise RuntimeError()
+
+	netfilter = ctypes.cdll.LoadLibrary(nflib)
+except:
+	logger.exception(MSG_NO_NFQUEUE)
+
+
+class NfqQHandler(ctypes.Structure):
+	pass
+
+
+class NfnlHandle(ctypes.Structure):
+	pass
+
+
+nfnl_callback_ctype = ctypes.CFUNCTYPE(
+	ctypes.c_int, *(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+)
+
+
+class NfnlCallback(ctypes.Structure):
+	_fileds_ = [("call", nfnl_callback_ctype),
+		("data", ctypes.c_void_p),
+		("attr_count", ctypes.c_uint16)
+	]
+
+
+class NfnlSubsysHandle(ctypes.Structure):
+	_fields_ = [("nfilter_handler", ctypes.POINTER(NfnlHandle)),
+		("subscriptions", ctypes.c_uint32),
+		("subsys_id", ctypes.c_uint8),
+		("cb_count", ctypes.c_uint8),
+		("callback", ctypes.POINTER(NfnlCallback))
+	]
+
+
+class NfqHandle(ctypes.Structure):
+	_fields_ = [("nfnlh", ctypes.POINTER(NfnlHandle)),
+		("nfnlssh", ctypes.POINTER(NfnlSubsysHandle)),
+		("qh_list", ctypes.POINTER(NfqQHandler))
+	]
+
+
+class NfqQHandle(ctypes.Structure):
+	_fields_ = [("next", ctypes.POINTER(NfqQHandler)),
+		("h", ctypes.POINTER(NfqHandle)),
+		("id", ctypes.c_uint16),
+		("cb", ctypes.POINTER(NfnlHandle)),
+		("data", ctypes.c_void_p)
+	]
+
+
+class NfqData(ctypes.Structure):
+	_fields_ = [("data", ctypes.POINTER(ctypes.c_void_p))]
+
+
+class NfqnlMsgPacketHw(ctypes.Structure):
+	_fields_ = [("hw_addrlen", ctypes.c_uint16),
+		("_pad", ctypes.c_uint16),
+		#############################
+		("hw_addr", ctypes.c_uint8 * 8)]
+
+
+class NfqnlMsgPacketHdr(ctypes.Structure):
+	_fields_ = [("packet_id", ctypes.c_uint32),
+		("hw_protocol", ctypes.c_uint16),
+		("hook", ctypes.c_uint8)
+	]
+
+
+class Timeval(ctypes.Structure):
+	_fields_ = [("tv_sec", ctypes.c_long),
+		("tv_usec", ctypes.c_long)]
+
+
+# Return netfilter netlink handler
+nfnlh = netfilter.nfq_nfnlh
+nfnlh.restype = ctypes.POINTER(NfnlHandle)
+nfnlh.argtypes = (ctypes.POINTER(NfqHandle),)
+
+# Return a file descriptor for the netlink connection associated with the
+# given queue connection handle.
+nfq_fd = netfilter.nfnl_fd
+nfq_fd.restype = ctypes.c_int
+nfq_fd.argtypes = (ctypes.POINTER(NfnlHandle),)
+
+nfnl_rcvbufsiz = netfilter.nfnl_rcvbufsiz
+nfnl_rcvbufsiz.restype = ctypes.c_int
+nfnl_rcvbufsiz.argtypes = ctypes.POINTER(NfnlHandle), ctypes.c_uint
+
+# This function obtains a netfilter queue connection handle
+ll_open_queue = netfilter.nfq_open
+ll_open_queue.restype = ctypes.POINTER(NfqHandle)
+
+# This function closes the nfqueue handler and free associated resources.
+close_queue = netfilter.nfq_close
+close_queue.restype = ctypes.c_int
+close_queue.argtypes = (ctypes.POINTER(NfqHandle),)
+
+# Bind a nfqueue handler to a given protocol family.
+bind_pf = netfilter.nfq_bind_pf
+bind_pf.restype = ctypes.c_int
+bind_pf.argtypes = ctypes.POINTER(NfqHandle), ctypes.c_uint16
+
+# Unbind nfqueue handler from a protocol family.
+unbind_pf = netfilter.nfq_unbind_pf
+unbind_pf.restype = ctypes.c_int
+unbind_pf.argtypes = ctypes.POINTER(NfqHandle), ctypes.c_uint16
+
+# Creates a new queue handle, and returns it.
+create_queue = netfilter.nfq_create_queue
+create_queue.restype = ctypes.POINTER(NfqQHandler)
+create_queue.argtypes = ctypes.POINTER(NfqHandle), ctypes.c_uint16, ctypes.c_void_p, ctypes.c_void_p
+
+# Removes the binding for the specified queue handle.
+destroy_queue = netfilter.nfq_destroy_queue
+destroy_queue.restype = ctypes.c_int
+destroy_queue.argtypes = (ctypes.POINTER(NfqQHandler),)
+
+# Triggers an associated callback for the given packet received from the queue.
+handle_packet = netfilter.nfq_handle_packet
+handle_packet.restype = ctypes.c_int
+handle_packet.argtypes = ctypes.POINTER(NfqHandle), ctypes.c_char_p, ctypes.c_int
+
+# nfqnl_config_mode
+NFQNL_COPY_NONE, NFQNL_COPY_META, NFQNL_COPY_PACKET = 0, 1, 2
+
+# Sets the amount of data to be copied to userspace for each packet queued
+# to the given queue.
+#
+# NFQNL_COPY_NONE - do not copy any data
+# NFQNL_COPY_META - copy only packet metadata
+# NFQNL_COPY_PACKET - copy entire packet
+set_mode = netfilter.nfq_set_mode
+set_mode.restype = ctypes.c_int
+set_mode.argtypes = ctypes.POINTER(NfqQHandler), ctypes.c_uint8, ctypes.c_uint
+
+# Sets the size of the queue in kernel. This fixes the maximum number
+# of packets the kernel will store before internally before dropping
+# upcoming packets.
+set_queue_maxlen = netfilter.nfq_set_queue_maxlen
+set_queue_maxlen.restype = ctypes.c_int
+set_queue_maxlen.argtypes = ctypes.POINTER(NfqQHandler), ctypes.c_uint32
+
+# Responses from hook functions.
+NF_DROP, NF_ACCEPT, NF_STOLEN = 0, 1, 2
+NF_QUEUE, NF_REPEAT, NF_STOP = 3, 4, 5
+NF_MAX_VERDICT = NF_STOP
+
+# Notifies netfilter of the userspace verdict for the given packet. Every
+# queued packet _must_ have a verdict specified by userspace, either by
+# calling this function, or by calling the nfq_set_verdict_mark() function.
+# NF_DROP - Drop packet
+# NF_ACCEPT - Accept packet
+# NF_STOLEN - Don't continue to process the packet and not deallocate it.
+# NF_QUEUE - Enqueue the packet
+# NF_REPEAT - Handle the same packet
+# NF_STOP -
+# NF_MAX_VERDICT -
+set_verdict = netfilter.nfq_set_verdict
+set_verdict.restype = ctypes.c_int
+set_verdict.argtypes = ctypes.POINTER(NfqQHandler), ctypes.c_uint32, ctypes.c_uint32, \
+	ctypes.c_uint32, ctypes.c_char_p
+
+# Return the metaheader that wraps the packet.
+get_msg_packet_hdr = netfilter.nfq_get_msg_packet_hdr
+get_msg_packet_hdr.restype = ctypes.POINTER(NfqnlMsgPacketHdr)
+get_msg_packet_hdr.argtypes = (ctypes.POINTER(NfqData),)
+
+
+# Get interface index
+# Translation from interface index -> interface name: socket.if_indextoname(1)
+
+# uint32_t nfq_get_physindev ( struct nfq_data *  nfad )
+get_physindev = netfilter.nfq_get_physindev
+get_physindev.restype = ctypes.c_uint32
+get_physindev.argtypes = (ctypes.POINTER(NfqData),)
+
+# uint32_t nfq_get_physoutdev ( struct nfq_data *  nfad )
+get_physoutdev = netfilter.nfq_get_physoutdev
+get_physoutdev.restype = ctypes.c_uint32
+get_physoutdev.argtypes = (ctypes.POINTER(NfqData),)
+
+
+# uint32_t  nfq_get_indev (struct nfq_data *nfad)
+get_indev = netfilter.nfq_get_indev
+get_indev.restype = ctypes.c_uint32
+get_indev.argtypes = (ctypes.POINTER(NfqData),)
+
+# uint32_t nfq_get_outdev ( struct nfq_data *  nfad )
+get_outdev = netfilter.nfq_get_outdev
+get_outdev.restype = ctypes.c_uint32
+get_outdev.argtypes = (ctypes.POINTER(NfqData),)
+
+
+# Retrieves the hardware address associated with the given queued packet.
+# struct nfqnl_msg_packet_hw* nfq_get_packet_hw	(	struct nfq_data * 	nfad	 ) 	[read]
+# Can be used to retrieve the source MAC address.
+# The destination MAC address is not known until after POSTROUTING and a successful ARP request,
+# so cannot currently be retrieved. (nfqueue documentation)
+get_packet_hw = netfilter.nfq_get_packet_hw
+get_packet_hw.restype = ctypes.POINTER(NfqnlMsgPacketHw)
+get_packet_hw.argtypes = (ctypes.POINTER(NfqData),)
+
+# Retrieve the payload for a queued packet.
+get_payload = netfilter.nfq_get_payload
+get_payload.restype = ctypes.c_int
+get_payload.argtypes = ctypes.POINTER(NfqData), ctypes.POINTER(ctypes.c_void_p)
+
+
+HANDLER = ctypes.CFUNCTYPE(
+	#(struct NfqQHandler *qh, struct nfgenmsg *nfmsg, struct NfqData *nfa, void *data)
+	None, *(ctypes.POINTER(NfqQHandler), ctypes.c_void_p, ctypes.POINTER(NfqData), ctypes.c_void_p)
+)
+
+
+def get_full_payload(nfa, ptr_packet):
+	len_recv = get_payload(nfa, ctypes.byref(ptr_packet))
+	data = ctypes.string_at(ptr_packet, len_recv)
+	return len_recv, data
+
+
+class UnableToBindException(Exception):
+	def __init__(self, queue_id):
+		self.queue_id = queue_id
+
+
+class Interceptor():
+	"""
+	Packet interceptor. Allows MITM and filtering.
+	Example config for iptables:
+	$ iptables -I INPUT 1 -p icmp -j NFQUEUE --queue-balance 0:2
+	Alternatively add nftables rule:
+	$ nft add table inet pptable
+	$ nft add chain inet pptable filter { type filter hook input priority 0; policy accept; }
+	$ nft add rule inet pptable filter counter queue num 0-2
+	"""
+	QueueConfig = namedtuple("QueueConfig",
+		["queue", "queue_id", "nfq_handle", "nfq_socket", "verdictthread", "handler"])
+
+	def __init__(self, nfqueue_size=2048, rcvbufsiz=2048):
+		"""
+		nfqueue_size -- Sets the size of the queue in kernel. This fixes the maximum number of packets the
+			kernel will store before internally before dropping upcoming packets.
+		rcvbufsiz -- Sets the new size of the socket buffer. Use this setting to increase the socket buffer
+			size if your system is reporting ENOBUFS errors.
+		See: https://www.netfilter.org/projects/libnetfilter_queue/doxygen/
+
+		WARNING: Set nfqueue_size and rcvbufsiz to None (or lower values) if there are any problems on receiving
+		"""
+		self._netfilterqueue_configs = []
+		self._is_running = False
+		self._nfqueue_size = nfqueue_size
+		self._rcvbufsiz = rcvbufsiz
+
+	@staticmethod
+	def verdict_trigger_cycler(recv_into, nfq_handle, obj):
+		# Max IP packet size = 65535 bytes
+		BUFSIZE = 70000
+		rw_buffer = bytearray(BUFSIZE)
+		rw_buffer_mview = memoryview(rw_buffer)
+
+		rw_buffer_ctype = ctypes.c_char * BUFSIZE
+		# Std python/ctype shared buffer
+		rw_buffer_ctype_shared = rw_buffer_ctype.from_buffer(rw_buffer)
+
+		try:
+			while obj._is_running:
+				bts_cnt = 0
+				# Shouldn't add much overhead if there is no Exception
+				try:
+					bts_cnt = recv_into(rw_buffer_mview)
+				except socket_timeout:
+					#logger.debug("Socket timeout...")
+					continue
+				except OSError as e:
+					# Ignore ENOBUFS errors, we can't handle this anyway
+					# Alternative is to set NETLINK_NO_ENOBUFS socket option
+					if e.errno == errno.ENOBUFS:
+						logger.warning("Droppin' a packet, consider increasing receive buffer")
+						continue
+					raise e
+
+				handle_packet(nfq_handle, rw_buffer_ctype_shared, bts_cnt)
+		except OSError:
+			# Eg "Bad file descriptor": started and nothing read yet
+			#logger.error(ex)
+			pass
+		except Exception as ex:
+			logger.error("Exception while reading: %r", ex)
+		#finally:
+		#	logger.debug("verdict_trigger_cycler finished, stopping Interceptor")
+		#	obj.stop()
+
+	def _setup_queue(self, queue_id, ctx, verdict_callback):
+		def verdict_callback_ind(queue_handle, nfmsg, nfa, _data): # pylint: disable=too-many-locals,unused-argument
+			packet_ptr = ctypes.c_void_p(0)
+			pkg_hdr = get_msg_packet_hdr(nfa)
+			packet_id = ntohl(pkg_hdr.contents.packet_id)
+			linklayer_protoid = htons(pkg_hdr.contents.hw_protocol)
+
+			len_recv, data = get_full_payload(nfa, packet_ptr) # pylint: disable=unused-variable
+			hw_addr = None
+			packet_hw = get_packet_hw(nfa)
+
+			if packet_hw:
+				# HW address not always present, eg DHCP discover -> offer...
+				hw_info = packet_hw.contents
+				hw_addrlen = ntohs(hw_info.hw_addrlen)
+				hw_addr = ctypes.string_at(hw_info.hw_addr, size=hw_addrlen)
+
+			if_idx_in = get_indev(nfa)
+			if_idx_out = get_outdev(nfa)
+
+			data_ret, verdict = data, NF_DROP
+
+			try:
+				data_ret, verdict = verdict_callback(hw_addr, linklayer_protoid, data, ctx, if_idx_in, if_idx_out)
+			except Exception as ex:
+				logger.warning("Verdict callback problem, packet will be dropped: %r", ex)
+
+			set_verdict(queue_handle, packet_id, verdict, len(data_ret), ctypes.c_char_p(data_ret))
+
+		nfq_handle = ll_open_queue()  # 2
+
+		# This call is obsolete, Linux kernels from 3.8 onwards ignore it.
+		#unbind_pf(nfq_handle, socket.AF_INET)
+		#bind_pf(nfq_handle, socket.AF_INET)
+
+		c_handler = HANDLER(verdict_callback_ind)
+		queue = create_queue(nfq_handle, queue_id, c_handler, None)  # 1
+
+		if not queue:
+			raise UnableToBindException(queue_id)
+
+		set_mode(queue, NFQNL_COPY_PACKET, 0xFFFF)
+
+		nf = nfnlh(nfq_handle)
+		fd = nfq_fd(nf)
+		# fd, family, sockettype
+		nfq_socket = socket.fromfd(fd, 0, 0)  # 3
+
+		if self._nfqueue_size is not None:
+			ret = set_queue_maxlen(queue, self._nfqueue_size)
+			if ret == -1:
+				logger.warning("Could not set queue_maxlen to %d", self._nfqueue_size)
+
+		if self._rcvbufsiz is not None:
+			ret = nfnl_rcvbufsiz(nf, self._rcvbufsiz)
+			#logger.debug("Update rcvbufsiz: %d", ret)
+
+		# TODO: Better solution to check for running state? Close socket and raise exception does not work in stop()
+		nfq_socket.settimeout(1)
+
+		thread = threading.Thread(
+			target=Interceptor.verdict_trigger_cycler,
+			args=[nfq_socket.recv_into, nfq_handle, self]
+		)
+
+		thread.start()
+
+		qconfig = Interceptor.QueueConfig(
+			queue=queue, queue_id=queue_id, nfq_handle=nfq_handle, nfq_socket=nfq_socket, verdictthread=thread,
+			handler=c_handler
+		)
+		self._netfilterqueue_configs.append(qconfig)
+
+	def start(self, verdict_callback, queue_ids, ctx=None):
+		"""
+		verdict_callback -- Signature: callback(hw_addr, linklayer_protoid, data, ctx, if_idx_in, if_idx_out): data, [NF_*]
+			Interface index to name via: socket.if_indextoname(if_idx_in)
+		queue_id --Que Ids placed using iptables/nftables like [id1, ...]
+		ctx -- Context object given to verdict callback
+		"""
+		if self._is_running:
+			return
+
+		self._is_running = True
+
+		try:
+			for queue_id in queue_ids:
+				# Setup queue and start producer threads
+				self._setup_queue(queue_id, ctx, verdict_callback)
+		except UnableToBindException as e:
+			self.stop()
+			raise e
+
+	def stop(self):
+		if not self._is_running:
+			return
+
+		# logger.debug("stopping Interceptor")
+		self._is_running = False
+
+		for qconfig in self._netfilterqueue_configs:
+			try:
+				destroy_queue(qconfig.queue)
+				close_queue(qconfig.nfq_handle)
+				qconfig.nfq_socket.close()
+				#logger.debug("Joining verdict thread for queue %d", qconfig.queue_id)
+				qconfig.verdictthread.join()
+			except:
+				# Don't mind, we can't do anything if something goes wrong here
+				pass
+		self._netfilterqueue_configs.clear()
+
+"""
+Internet Protocol version 6..for whoever needs it (:
+
+RFC 2460
+"""
+
+logger = logging.getLogger("pypacker")
+
+EXT_HDRS = {
+	IP_PROTO_HOPOPTS,
+	IP_PROTO_IP6,
+	IP_PROTO_ROUTING,
+	IP_PROTO_FRAGMENT,
+	IP_PROTO_AH,
+	IP_PROTO_ESP,
+	IP_PROTO_DSTOPTS,
+	# TODO: to be implemented
+	# IP_PROTO_MOBILITY
+	# IP_PROTO_NONEXT
+}
+
+
+class IP6(pypacker.Packet):
+	__hdr__ = (
+		("v_fc_flow", "I", 0x60000000),
+		("dlen", "H", 0, FIELD_FLAG_AUTOUPDATE),  # Length: opts + data
+		# Body handler type OR type of first extension hedader (opts header)
+		("nxt", "B", 0),
+		("hlim", "B", 255),  # hop limit
+		("src", "16s", b"\x00" * 16),
+		("dst", "16s", b"\x00" * 16),
+		("opts", None, triggerlist.TriggerList)
+	)
+
+	def __get_v(self):
+		return self.v_fc_flow >> 28
+
+	def __set_v(self, v):
+		self.v_fc_flow = (self.v_fc_flow & ~0xF0000000) | (v << 28)
+	v = property(__get_v, __set_v)
+
+	def __get_fc(self):
+		return (self.v_fc_flow >> 20) & 0xFF
+
+	def __set_fc(self, v):
+		self.v_fc_flow = (self.v_fc_flow & ~0xFF00000) | (v << 20)
+	fc = property(__get_fc, __set_fc)
+
+	def __get_flow(self):
+		return self.v_fc_flow & 0xFFFFF
+
+	def __set_flow(self, v):
+		self.v_fc_flow = (self.v_fc_flow & ~0xFFFFF) | (v & 0xFFFFF)
+	flow = property(__get_flow, __set_flow)
+
+	# Convenient access for: src[_s], dst[_s]
+	src_s = pypacker.get_property_ip6("src")
+	dst_s = pypacker.get_property_ip6("dst")
+	nxt_t = pypacker.get_property_translator("nxt", "IP_PROTO_")
+
+	__handler__ = {
+		IP_PROTO_ICMP6: icmp6.ICMP6,
+		IP_PROTO_IGMP: igmp.IGMP,
+		IP_PROTO_TCP: tcp.TCP,
+		IP_PROTO_UDP: udp.UDP,
+		IP_PROTO_ESP: esp.ESP,
+		IP_PROTO_PIM: pim.PIM,
+		IP_PROTO_IPXIP: ipx.IPX,
+		IP_PROTO_SCTP: sctp.SCTP,
+		IP_PROTO_OSPF: ospf.OSPF
+	}
+
+	__update_dependants__ = {tcp.TCP, udp.UDP, icmp6.ICMP6}
+
+	def _dissect_opts(self, buf, collect_opts=True):
+		off = 0
+		opts = []
+		type_current = self._type_opt
+		#OPT_BASEHEADER_LEN = 8
+		OPT_OFF_OLEN_SUB = 1
+		OPT_OFF_TYPENXT_IP6 = 6
+		OPTLEN_IP6 = 40
+
+		while type_current in EXT_HDRS and off < len(buf):
+			# Assume there is at least one option.
+			# Different header structure for IP6 and sub-header
+			# IP6: Total length = 8 + Payload length
+			if type_current != IP_PROTO_IP6:
+				# len 0 = 8 bytes
+				optlen = 8 + buf[off + OPT_OFF_OLEN_SUB] * 8
+				type_next = buf[off]
+			else:
+				# Fixed header length
+				optlen = OPTLEN_IP6
+				type_next = buf[off + OPT_OFF_TYPENXT_IP6]
+
+			if collect_opts:
+				opt = ext_hdrs_cls[type_current](buf[off: off + optlen])
+				opts.append(opt)
+			#logger.debug("Current type=%d, next type=%d, optlen=%d, %r" % (
+			#	type_current, type_next, optlen, buf[off:off + optlen]))
+			type_current = type_next
+			off += optlen
+
+		return (off, type_current) if not collect_opts else opts
+
+	def _dissect(self, buf):
+		BASEHEADER_LEN = 40  # Length: v_fc_flow -> dst
+		TYPENXT_OFF = 6
+		type_payload = buf[TYPENXT_OFF]
+		optlen = 0
+		#logger.debug("1st type: %r" % type_payload)
+
+		# Parse options until type is an upper layer one
+		if type_payload in EXT_HDRS:
+			dlen = unpack_H(buf[4: 6])[0]
+			# Used by tl
+			self._type_opt = type_payload
+			optlen, type_payload = self._dissect_opts(
+				buf[BASEHEADER_LEN: BASEHEADER_LEN + dlen],
+				collect_opts=False)
+			#logger.debug("Handler will be=%r, optlen=%r" % (type_payload, optlen))
+			self.opts(buf[BASEHEADER_LEN: BASEHEADER_LEN + optlen], self._dissect_opts)
+
+		return BASEHEADER_LEN + optlen, type_payload
+
+	def _update_fields(self):
+		if self.dlen_au_active:
+			self.dlen = len(self.opts.bin()) + len(self.body_bytes)
+		# Set type value in nxt OR in last opts element (if present)
+		# Updating is a bit more complicated so we can't use FIELD_FLAG_IS_TYPEFIELD
+		# idval is None if body handler is None
+		# logger.debug("handler %r -> %r", self.__class__, self.higher_layer.__class__)
+		idval = pypacker.Packet.get_id_for_handlerclass(self.__class__, self.higher_layer.__class__)
+		#logger.debug("nxt will be %r", idval)
+
+		if idval is not None:
+			if len(self.opts) == 0:
+				self.nxt = idval
+			else:
+				# problem if opts[-1] is immutable
+				try:
+					self.opts[-1].nxt = idval
+				except:
+					pass
+
+	def direction(self, other):
+		# logger.debug("checking direction: %s<->%s" % (self, next))
+		if self.src == other.src and self.dst == other.dst:
+			# consider packet to itself: can be DIR_REV
+			return pypacker.Packet.DIR_SAME | pypacker.Packet.DIR_REV
+		if self.src == other.dst and self.dst == other.src:
+			return pypacker.Packet.DIR_REV
+		return pypacker.Packet.DIR_UNKNOWN
+
+	def reverse_address(self):
+		self.src, self.dst = self.dst, self.src
+
+	class IP6OptsHeader(pypacker.Packet):
+		__hdr__ = (
+			("nxt", "B", 0),  # next extension header protocol
+			("len", "B", 0),  # option data length in 8 octect units (ignoring first 8 octets) so, len 0 == 64bit header
+			("opts", None, triggerlist.TriggerList)
+		)
+
+		nxt_t = pypacker.get_property_translator("nxt", "IP_PROTO_")
+
+		@staticmethod
+		def parse_opts(buf):
+			off = 0
+			opts = []
+
+			while off < len(buf):
+				opt_type = buf[off]
+				#logger.debug("IP6OptsHeader: type: %d" % opt_type)
+
+				# http://tools.ietf.org/html/rfc2460#section-4.2
+				# PAD1 option: no length or data field
+				if opt_type == 1:
+					#logger.debug("IP6OptionPad")
+					opt = IP6.IP6OptsHeader.IP6OptionPad(buf[off: off + 2])
+					off += 2  # type field + length field
+				else:
+					#logger.debug("IP6Option")
+					opt_len = buf[off + 1]
+					opt = IP6.IP6OptsHeader.IP6Option(buf[off: off + 2 + opt_len])
+					off += 2 + opt_len  # type field + length field + dat
+
+				opts.append(opt)
+			#logger.debug("Returning opts: %r" % opts)
+			return opts
+
+		def _dissect(self, buf):
+			hlen = 8 + buf[1] * 8
+			OPTS_OFF = 2
+
+			self.opts(buf[OPTS_OFF: hlen], IP6.IP6OptsHeader.parse_opts)
+			return hlen
+
+		class IP6Option(pypacker.Packet):
+			__hdr__ = (
+				("type", "B", 0),
+				("len", "B", 0)
+			)
+
+		class IP6OptionPad(pypacker.Packet):
+			__hdr__ = (
+				("type", "B", 0),
+			)
+
+		class IP6HopOptsHeader(pypacker.Packet):
+			__hdr__ = (
+				("nxt", "B", 0),  # next extension header protocol
+				("len", "B", 0),  # option data length in 8 octect units (ignoring first 8 octets) so, len 0 == 64bit header
+				("opts", None, triggerlist.TriggerList)
+			)
+
+			nxt_t = pypacker.get_property_translator("nxt", "IP_PROTO_")
+
+			def _dissect(self, buf):
+				# logger.debug("IP6HopOptsHeader parsing")
+				return IP6.IP6OptsHeader._dissect(self, buf)
+
+		class IP6RoutingHeader(pypacker.Packet):
+			__hdr__ = (
+				("nxt", "B", 0),  # next extension header protocol
+				("len", "B", 0),  # extension data length in 8 octect units (ignoring first 8 octets) (<= 46 for type 0)
+				("type", "B", 0),  # routing type (currently, only 0 is used)
+				("segs_left", "B", 0),  # remaining segments in route, until destination (<= 23)
+				("lastentry", "B", 0),
+				("flags", "B", 0),
+				("tag", "H", 0),
+				("addresses", None, triggerlist.TriggerList)
+			)
+
+			nxt_t = pypacker.get_property_translator("nxt", "IP_PROTO_")
+
+			def __get_sl_bits(self):
+				return self.rsvd_sl_bits & 0xFFFFFF
+
+			def __set_sl_bits(self, v):
+				self.rsvd_sl_bits = (self.rsvd_sl_bits & ~0xFFFFF) | (v & 0xFFFFF)
+
+			sl_bits = property(__get_sl_bits, __set_sl_bits)
+
+			def _dissect(self, buf):
+				hdr_size = 8
+				addr_size = 16
+				num_addresses = int(buf[1] / 2)
+				buf_opts = buf[hdr_size: hdr_size + num_addresses * addr_size]
+				self.addresses(buf_opts,
+					lambda buf: [buf[i * addr_size: i * addr_size + addr_size].tobytes() for i in range(num_addresses)])
+
+				return hdr_size + num_addresses * addr_size
+
+		class IP6FragmentHeader(pypacker.Packet):
+			__hdr__ = (
+				("nxt", "B", 0),			# next extension header protocol
+				("resv", "B", 0),			# reserved, set to 0
+				("frag_off_resv_m", "H", 0),		# frag offset (13 bits), reserved zero (2 bits), More frags flag
+				("id", "I", 0)				# fragments id
+			)
+
+			nxt_t = pypacker.get_property_translator("nxt", "IP_PROTO_")
+
+			def __get_frag_off(self):
+				return self.frag_off_resv_m >> 3
+
+			def __set_frag_off(self, v):
+				self.frag_off_resv_m = (self.frag_off_resv_m & ~0xFFF8) | (v << 3)
+			frag_off = property(__get_frag_off, __set_frag_off)
+
+			def __get_m_flag(self):
+				return self.frag_off_resv_m & 1
+
+			def __set_m_flag(self, v):
+				self.frag_off_resv_m = (self.frag_off_resv_m & ~0xFFFE) | v
+			m_flag = property(__get_m_flag, __set_m_flag)
+
+		class IP6ESPHeader(pypacker.Packet):
+			def _dissect(self, buf):
+				raise NotImplementedError("ESP extension headers are not supported.")
+
+		class IP6AHHeader(pypacker.Packet):
+			__hdr__ = (
+				("nxt", "B", 0),			 # next extension header protocol
+				("len", "B", 0),			 # length of header in 4 octet units (ignoring first 2 units)
+				("resv", "H", 0),			 # reserved, 2 bytes of 0
+				("spi", "I", 0),			 # SPI security parameter index
+				("seq", "I", 0)				 # sequence no.
+			)
+
+			nxt_t = pypacker.get_property_translator("nxt", "IP_PROTO_")
+
+		class IP6DstOptsHeader(pypacker.Packet):
+			__hdr__ = (
+				("nxt", "B", 0),  # next extension header protocol
+				("len", "B", 0),  # option data length in 8 octect units (ignoring first 8 octets) so, len 0 == 64bit header
+				("opts", None, triggerlist.TriggerList)
+			)
+
+			def _dissect(self, buf):
+				# logger.debug("IP6DstOptsHeader parsing")
+				IP6.IP6OptsHeader._dissect(self, buf)
+
+			nxt_t = pypacker.get_property_translator("nxt", "IP_PROTO_")
+
+
+# Needs to be put here and not IP6 bc: IP6 is not known at class definition time
+ext_hdrs_cls = {
+	IP_PROTO_IP6: IP6,
+	IP_PROTO_HOPOPTS: IP6.IP6OptsHeader.IP6HopOptsHeader,
+	IP_PROTO_ROUTING: IP6.IP6OptsHeader.IP6RoutingHeader,
+	IP_PROTO_FRAGMENT: IP6.IP6OptsHeader.IP6FragmentHeader,
+	IP_PROTO_ESP: IP6.IP6OptsHeader.IP6ESPHeader,
+	IP_PROTO_AH: IP6.IP6OptsHeader.IP6AHHeader,
+	IP_PROTO_DSTOPTS: IP6.IP6OptsHeader.IP6DstOptsHeader
+	# IP_PROTO_MOBILITY:
+	# IP_PROTO_NONEXT:
+}
+
+    
+####################################################################
+#
+#
+#           DSHELL I SCRIPTS END
+#
+#
+###################################################################
+    
+
+####################################################################
+#
+#
+#           DSHELL J THROUGH L SCRIPTS START
+#
+#
+###################################################################
+
+
+"""Generate JA3 fingerprints from PCAPs using Python."""
+
+
+__author__ = "Tommy Stallings"
+__copyright__ = "Copyright (c) 2017, salesforce.com, inc."
+__credits__ = ["John B. Althouse", "Jeff Atkinson", "Josh Atkins"]
+__license__ = "BSD 3-Clause License"
+__version__ = "1.0.0"
+__maintainer__ = "Tommy Stallings, Brandon Dixon"
+__email__ = "tommy.stallings2@gmail.com"
+
+
+GREASE_TABLE = {0x0a0a: True, 0x1a1a: True, 0x2a2a: True, 0x3a3a: True,
+                0x4a4a: True, 0x5a5a: True, 0x6a6a: True, 0x7a7a: True,
+                0x8a8a: True, 0x9a9a: True, 0xaaaa: True, 0xbaba: True,
+                0xcaca: True, 0xdada: True, 0xeaea: True, 0xfafa: True}
+# GREASE_TABLE Ref: https://tools.ietf.org/html/draft-davidben-tls-grease-00
+SSL_PORT = 443
+TLS_HANDSHAKE = 22
+
+
+def convert_ip(value):
+    """Convert an IP address from binary to text.
+
+    :param value: Raw binary data to convert
+    :type value: str
+    :returns: str
+    """
+    try:
+        return socket.inet_ntop(socket.AF_INET, value)
+    except ValueError:
+        return socket.inet_ntop(socket.AF_INET6, value)
+
+
+def parse_variable_array(buf, byte_len):
+    """Unpack data from buffer of specific length.
+
+    :param buf: Buffer to operate on
+    :type buf: bytes
+    :param byte_len: Length to process
+    :type byte_len: int
+    :returns: bytes, int
+    """
+    _SIZE_FORMATS = ['!B', '!H', '!I', '!I']
+    assert byte_len <= 4
+    size_format = _SIZE_FORMATS[byte_len - 1]
+    padding = b'\x00' if byte_len == 3 else b''
+    size = struct.unpack(size_format, padding + buf[:byte_len])[0]
+    data = buf[byte_len:byte_len + size]
+
+    return data, size + byte_len
+
+
+def ntoh(buf):
+    """Convert to network order.
+
+    :param buf: Bytes to convert
+    :type buf: bytearray
+    :returns: int
+    """
+    if len(buf) == 1:
+        return buf[0]
+    elif len(buf) == 2:
+        return struct.unpack('!H', buf)[0]
+    elif len(buf) == 4:
+        return struct.unpack('!I', buf)[0]
+    else:
+        raise ValueError('Invalid input buffer size for NTOH')
+
+
+def convert_to_ja3_segment(data, element_width):
+    """Convert a packed array of elements to a JA3 segment.
+
+    :param data: Current PCAP buffer item
+    :type: str
+    :param element_width: Byte count to process at a time
+    :type element_width: int
+    :returns: str
+    """
+    int_vals = list()
+    data = bytearray(data)
+    if len(data) % element_width:
+        message = '{count} is not a multiple of {width}'
+        message = message.format(count=len(data), width=element_width)
+        raise ValueError(message)
+
+    for i in range(0, len(data), element_width):
+        element = ntoh(data[i: i + element_width])
+        if element not in GREASE_TABLE:
+            int_vals.append(element)
+
+    return "-".join(str(x) for x in int_vals)
+
+
+def process_extensions(client_handshake):
+    """Process any extra extensions and convert to a JA3 segment.
+
+    :param client_handshake: Handshake data from the packet
+    :type client_handshake: dpkt.ssl.TLSClientHello
+    :returns: list
+    """
+    if not hasattr(client_handshake, "extensions"):
+        # Needed to preserve commas on the join
+        return ["", "", ""]
+
+    exts = list()
+    elliptic_curve = ""
+    elliptic_curve_point_format = ""
+    for ext_val, ext_data in client_handshake.extensions:
+        if not GREASE_TABLE.get(ext_val):
+            exts.append(ext_val)
+        if ext_val == 0x0a:
+            a, b = parse_variable_array(ext_data, 2)
+            # Elliptic curve points (16 bit values)
+            elliptic_curve = convert_to_ja3_segment(a, 2)
+        elif ext_val == 0x0b:
+            a, b = parse_variable_array(ext_data, 1)
+            # Elliptic curve point formats (8 bit values)
+            elliptic_curve_point_format = convert_to_ja3_segment(a, 1)
+        else:
+            continue
+
+    results = list()
+    results.append("-".join([str(x) for x in exts]))
+    results.append(elliptic_curve)
+    results.append(elliptic_curve_point_format)
+    return results
+
+
+def process_pcap(pcap, any_port=False):
+    """Process packets within the PCAP.
+
+    :param pcap: Opened PCAP file to be processed
+    :type pcap: dpkt.pcap.Reader
+    :param any_port: Whether or not to search for non-SSL ports
+    :type any_port: bool
+    """
+    decoder = dpkt.ethernet.Ethernet
+    linktype = pcap.datalink()
+    if linktype == dpkt.pcap.DLT_LINUX_SLL:
+        decoder = dpkt.sll.SLL
+    elif linktype == dpkt.pcap.DLT_NULL or linktype == dpkt.pcap.DLT_LOOP:
+        decoder = dpkt.loopback.Loopback
+
+    results = list()
+    for timestamp, buf in pcap:
+        try:
+            eth = decoder(buf)
+        except Exception:
+            continue
+
+        if not isinstance(eth.data, (dpkt.ip.IP, dpkt.ip6.IP6)):
+            # We want an IP packet
+            continue
+        if not isinstance(eth.data.data, dpkt.tcp.TCP):
+            # TCP only
+            continue
+
+        ip = eth.data
+        tcp = ip.data
+
+        if not (tcp.dport == SSL_PORT or tcp.sport == SSL_PORT or any_port):
+            # Doesn't match SSL port or we are picky
+            continue
+        if len(tcp.data) <= 0:
+            continue
+
+        tls_handshake = bytearray(tcp.data)
+        if tls_handshake[0] != TLS_HANDSHAKE:
+            continue
+
+        records = list()
+
+        try:
+            records, bytes_used = dpkt.ssl.tls_multi_factory(tcp.data)
+        except dpkt.ssl.SSL3Exception:
+            continue
+        except dpkt.dpkt.NeedData:
+            continue
+
+        if len(records) <= 0:
+            continue
+
+        for record in records:
+            if record.type != TLS_HANDSHAKE:
+                continue
+            if len(record.data) == 0:
+                continue
+            client_hello = bytearray(record.data)
+            if client_hello[0] != 1:
+                # We only want client HELLO
+                continue
+            try:
+                handshake = dpkt.ssl.TLSHandshake(record.data)
+            except dpkt.dpkt.NeedData:
+                # Looking for a handshake here
+                continue
+            if not isinstance(handshake.data, dpkt.ssl.TLSClientHello):
+                # Still not the HELLO
+                continue
+
+            client_handshake = handshake.data
+            buf, ptr = parse_variable_array(client_handshake.data, 1)
+            buf, ptr = parse_variable_array(client_handshake.data[ptr:], 2)
+            ja3 = [str(client_handshake.version)]
+
+            # Cipher Suites (16 bit values)
+            ja3.append(convert_to_ja3_segment(buf, 2))
+            ja3 += process_extensions(client_handshake)
+            ja3 = ",".join(ja3)
+
+            record = {"source_ip": convert_ip(ip.src),
+                      "destination_ip": convert_ip(ip.dst),
+                      "source_port": tcp.sport,
+                      "destination_port": tcp.dport,
+                      "ja3": ja3,
+                      "ja3_digest": md5(ja3.encode()).hexdigest(),
+                      "timestamp": timestamp,
+                      "client_hello_pkt": binascii.hexlify(tcp.data).decode('utf-8')}
+            results.append(record)
+
+    return results
+
+
+def main():
+    """Intake arguments from the user and print out JA3 output."""
+    desc = "A python script for extracting JA3 fingerprints from PCAP files"
+    parser = argparse.ArgumentParser(description=(desc))
+    parser.add_argument("pcap", help="The pcap file to process")
+    help_text = "Look for client hellos on any port instead of just 443"
+    parser.add_argument("-a", "--any_port", required=False,
+                        action="store_true", default=False,
+                        help=help_text)
+    help_text = "Print out as JSON records for downstream parsing"
+    parser.add_argument("-j", "--json", required=False, action="store_true",
+                        default=False, help=help_text)
+    help_text = "Print packet related data for research (json only)"
+    parser.add_argument("-r", "--research", required=False, action="store_true",
+                        default=False, help=help_text)
+    args = parser.parse_args()
+
+    # Use an iterator to process each line of the file
+    output = None
+    with open(args.pcap, 'rb') as fp:
+        try:
+            capture = dpkt.pcap.Reader(fp)
+        except ValueError as e_pcap:
+            try:
+                fp.seek(0, os.SEEK_SET)
+                capture = dpkt.pcapng.Reader(fp)
+            except ValueError as e_pcapng:
+                raise Exception(
+                        "File doesn't appear to be a PCAP or PCAPng: %s, %s" %
+                        (e_pcap, e_pcapng))
+        output = process_pcap(capture, any_port=args.any_port)
+
+    if args.json:
+        if not args.research:
+            def remove_items(x):
+                del x['client_hello_pkt']
+            list(map(remove_items,output))
+        output = json.dumps(output, indent=4, sort_keys=True)
+        print(output)
+    else:
+        for record in output:
+            tmp = '[{dest}:{port}] JA3: {segment} --> {digest}'
+            tmp = tmp.format(dest=record['destination_ip'],
+                             port=record['destination_port'],
+                             segment=record['ja3'],
+                             digest=record['ja3_digest'])
+            print(tmp)
+
+
+if __name__ == "__main__":
+        main()
+
+
+
+"""Generate JA3 fingerprints from PCAPs using Python."""
+
+
+__author__ = "Tommy Stallings"
+__copyright__ = "Copyright (c) 2017, salesforce.com, inc."
+__credits__ = ["John B. Althouse", "Jeff Atkinson", "Josh Atkins"]
+__license__ = "BSD 3-Clause License"
+__version__ = "1.0.0"
+__maintainer__ = "Tommy Stallings, Brandon Dixon"
+__email__ = "tommy.stallings@salesforce.com"
+
+
+GREASE_TABLE = {0x0a0a: True, 0x1a1a: True, 0x2a2a: True, 0x3a3a: True,
+                0x4a4a: True, 0x5a5a: True, 0x6a6a: True, 0x7a7a: True,
+                0x8a8a: True, 0x9a9a: True, 0xaaaa: True, 0xbaba: True,
+                0xcaca: True, 0xdada: True, 0xeaea: True, 0xfafa: True}
+# GREASE_TABLE Ref: https://tools.ietf.org/html/draft-davidben-tls-grease-00
+SSL_PORT = 443
+TLS_HANDSHAKE = 22
+
+
+def convert_ip(value):
+    """Convert an IP address from binary to text.
+
+    :param value: Raw binary data to convert
+    :type value: str
+    :returns: str
+    """
+    try:
+        return socket.inet_ntop(socket.AF_INET, value)
+    except ValueError:
+        return socket.inet_ntop(socket.AF_INET6, value)
+
+
+def parse_variable_array(buf, byte_len):
+    """Unpack data from buffer of specific length.
+
+    :param buf: Buffer to operate on
+    :type buf: bytes
+    :param byte_len: Length to process
+    :type byte_len: int
+    :returns: bytes, int
+    """
+    _SIZE_FORMATS = ['!B', '!H', '!I', '!I']
+    assert byte_len <= 4
+    size_format = _SIZE_FORMATS[byte_len - 1]
+    padding = b'\x00' if byte_len == 3 else b''
+    size = struct.unpack(size_format, padding + buf[:byte_len])[0]
+    data = buf[byte_len:byte_len + size]
+
+    return data, size + byte_len
+
+
+def ntoh(buf):
+    """Convert to network order.
+
+    :param buf: Bytes to convert
+    :type buf: bytearray
+    :returns: int
+    """
+    if len(buf) == 1:
+        return buf[0]
+    elif len(buf) == 2:
+        return struct.unpack('!H', buf)[0]
+    elif len(buf) == 4:
+        return struct.unpack('!I', buf)[0]
+    else:
+        raise ValueError('Invalid input buffer size for NTOH')
+
+
+def convert_to_ja3_segment(data, element_width):
+    """Convert a packed array of elements to a JA3 segment.
+
+    :param data: Current PCAP buffer item
+    :type: str
+    :param element_width: Byte count to process at a time
+    :type element_width: int
+    :returns: str
+    """
+    int_vals = list()
+    data = bytearray(data)
+    if len(data) % element_width:
+        message = '{count} is not a multiple of {width}'
+        message = message.format(count=len(data), width=element_width)
+        raise ValueError(message)
+
+    for i in range(0, len(data), element_width):
+        element = ntoh(data[i: i + element_width])
+        if element not in GREASE_TABLE:
+            int_vals.append(element)
+
+    return "-".join(str(x) for x in int_vals)
+
+
+def process_extensions(client_handshake):
+    """Process any extra extensions and convert to a JA3 segment.
+
+    :param client_handshake: Handshake data from the packet
+    :type client_handshake: dpkt.ssl.TLSClientHello
+    :returns: list
+    """
+    if not hasattr(client_handshake, "extensions"):
+        # Needed to preserve commas on the join
+        return ["", "", ""]
+
+    exts = list()
+    elliptic_curve = ""
+    elliptic_curve_point_format = ""
+    for ext_val, ext_data in client_handshake.extensions:
+        if not GREASE_TABLE.get(ext_val):
+            exts.append(ext_val)
+        if ext_val == 0x0a:
+            a, b = parse_variable_array(ext_data, 2)
+            # Elliptic curve points (16 bit values)
+            elliptic_curve = convert_to_ja3_segment(a, 2)
+        elif ext_val == 0x0b:
+            a, b = parse_variable_array(ext_data, 1)
+            # Elliptic curve point formats (8 bit values)
+            elliptic_curve_point_format = convert_to_ja3_segment(a, 1)
+        else:
+            continue
+
+    results = list()
+    results.append("-".join([str(x) for x in exts]))
+    results.append(elliptic_curve)
+    results.append(elliptic_curve_point_format)
+    return results
+
+
+def process_pcap(pcap, any_port=False):
+    """Process packets within the PCAP.
+
+    :param pcap: Opened PCAP file to be processed
+    :type pcap: dpkt.pcap.Reader
+    :param any_port: Whether or not to search for non-SSL ports
+    :type any_port: bool
+    """
+    decoder = dpkt.ethernet.Ethernet
+    linktype = pcap.datalink()
+    if linktype == dpkt.pcap.DLT_LINUX_SLL:
+        decoder = dpkt.sll.SLL
+    elif linktype == dpkt.pcap.DLT_NULL or linktype == dpkt.pcap.DLT_LOOP:
+        decoder = dpkt.loopback.Loopback
+
+    results = list()
+    for timestamp, buf in pcap:
+        try:
+            eth = decoder(buf)
+        except Exception:
+            continue
+
+        if not isinstance(eth.data, (dpkt.ip.IP, dpkt.ip6.IP6)):
+            # We want an IP packet
+            continue
+        if not isinstance(eth.data.data, dpkt.tcp.TCP):
+            # TCP only
+            continue
+
+        ip = eth.data
+        tcp = ip.data
+
+        if not (tcp.dport == SSL_PORT or tcp.sport == SSL_PORT or any_port):
+            # Doesn't match SSL port or we are picky
+            continue
+        if len(tcp.data) <= 0:
+            continue
+
+        tls_handshake = bytearray(tcp.data)
+        if tls_handshake[0] != TLS_HANDSHAKE:
+            continue
+
+        records = list()
+
+        try:
+            records, bytes_used = dpkt.ssl.tls_multi_factory(tcp.data)
+        except dpkt.ssl.SSL3Exception:
+            continue
+        except dpkt.dpkt.NeedData:
+            continue
+
+        if len(records) <= 0:
+            continue
+
+        for record in records:
+            if record.type != TLS_HANDSHAKE:
+                continue
+            if len(record.data) == 0:
+                continue
+            client_hello = bytearray(record.data)
+            if client_hello[0] != 1:
+                # We only want client HELLO
+                continue
+            try:
+                handshake = dpkt.ssl.TLSHandshake(record.data)
+            except dpkt.dpkt.NeedData:
+                # Looking for a handshake here
+                continue
+            if not isinstance(handshake.data, dpkt.ssl.TLSClientHello):
+                # Still not the HELLO
+                continue
+
+            client_handshake = handshake.data
+            buf, ptr = parse_variable_array(client_handshake.data, 1)
+            buf, ptr = parse_variable_array(client_handshake.data[ptr:], 2)
+            ja3 = [str(client_handshake.version)]
+
+            # Cipher Suites (16 bit values)
+            ja3.append(convert_to_ja3_segment(buf, 2))
+            ja3 += process_extensions(client_handshake)
+            ja3 = ",".join(ja3)
+
+            record = {"source_ip": convert_ip(ip.src),
+                      "destination_ip": convert_ip(ip.dst),
+                      "source_port": tcp.sport,
+                      "destination_port": tcp.dport,
+                      "ja3": ja3,
+                      "ja3_digest": md5(ja3.encode()).hexdigest(),
+                      "timestamp": timestamp}
+            results.append(record)
+
+    return results
+
+
+def main():
+    """Intake arguments from the user and print out JA3 output."""
+    desc = "A python script for extracting JA3 fingerprints from PCAP files"
+    parser = argparse.ArgumentParser(description=(desc))
+    parser.add_argument("pcap", help="The pcap file to process")
+    help_text = "Look for client hellos on any port instead of just 443"
+    parser.add_argument("-a", "--any_port", required=False,
+                        action="store_true", default=False,
+                        help=help_text)
+    help_text = "Print out as JSON records for downstream parsing"
+    parser.add_argument("-j", "--json", required=False, action="store_true",
+                        default=True, help=help_text)
+    args = parser.parse_args()
+
+    # Use an iterator to process each line of the file
+    output = None
+    with open(args.pcap, 'rb') as fp:
+        try:
+            capture = dpkt.pcap.Reader(fp)
+        except ValueError as e_pcap:
+            try:
+                fp.seek(0, os.SEEK_SET)
+                capture = dpkt.pcapng.Reader(fp)
+            except ValueError as e_pcapng:
+                raise Exception(
+                        "File doesn't appear to be a PCAP or PCAPng: %s, %s" %
+                        (e_pcap, e_pcapng))
+        output = process_pcap(capture, any_port=args.any_port)
+
+    if args.json:
+        output = json.dumps(output, indent=4, sort_keys=True)
+        print(output)
+    else:
+        for record in output:
+            tmp = '[{dest}:{port}] JA3: {segment} --> {digest}'
+            tmp = tmp.format(dest=record['destination_ip'],
+                             port=record['destination_port'],
+                             segment=record['ja3'],
+                             digest=record['ja3_digest'])
+            print(tmp)
+
+
+if __name__ == "__main__":
+        main()
+
+
+
+"""Generate JA3 fingerprints from PCAPs using Python."""
+
+
+__author__ = "Tommy Stallings"
+__copyright__ = "Copyright (c) 2017, salesforce.com, inc."
+__credits__ = ["John B. Althouse", "Jeff Atkinson", "Josh Atkins"]
+__license__ = "BSD 3-Clause License"
+__version__ = "1.0.1"
+__maintainer__ = "Tommy Stallings, Brandon Dixon"
+__email__ = "tommy.stallings2@gmail.com"
+
+
+SSL_PORT = 443
+TLS_HANDSHAKE = 22
+
+
+def convert_ip(value):
+    """Convert an IP address from binary to text.
+
+    :param value: Raw binary data to convert
+    :type value: str
+    :returns: str
+    """
+    try:
+        return socket.inet_ntop(socket.AF_INET, value)
+    except ValueError:
+        return socket.inet_ntop(socket.AF_INET6, value)
+
+
+def process_extensions(server_handshake):
+    """Process any extra extensions and convert to a JA3 segment.
+
+    :param client_handshake: Handshake data from the packet
+    :type client_handshake: dpkt.ssl.TLSClientHello
+    :returns: list
+    """
+    if not hasattr(server_handshake, "extensions"):
+        # Needed to preserve commas on the join
+        return [""]
+
+    exts = list()
+    for ext_val, ext_data in server_handshake.extensions:
+        exts.append(ext_val)
+
+    results = list()
+    results.append("-".join([str(x) for x in exts]))
+    return results
+
+
+def process_pcap(pcap, any_port=False):
+    """Process packets within the PCAP.
+
+    :param pcap: Opened PCAP file to be processed
+    :type pcap: dpkt.pcap.Reader
+    :param any_port: Whether or not to search for non-SSL ports
+    :type any_port: bool
+    """
+    decoder = dpkt.ethernet.Ethernet
+    linktype = pcap.datalink()
+    if linktype == dpkt.pcap.DLT_LINUX_SLL:
+        decoder = dpkt.sll.SLL
+    elif linktype == dpkt.pcap.DLT_NULL or linktype == dpkt.pcap.DLT_LOOP:
+        decoder = dpkt.loopback.Loopback
+
+    results = list()
+    for timestamp, buf in pcap:
+        try:
+            eth = decoder(buf)
+        except Exception:
+            continue
+
+        if not isinstance(eth.data, (dpkt.ip.IP, dpkt.ip6.IP6)):
+            # We want an IP packet
+            continue
+        if not isinstance(eth.data.data, dpkt.tcp.TCP):
+            # TCP only
+            continue
+
+        ip = eth.data
+        tcp = ip.data
+
+        if not (tcp.dport == SSL_PORT or tcp.sport == SSL_PORT or any_port):
+            # Doesn't match SSL port or we are picky
+            continue
+        if len(tcp.data) <= 0:
+            continue
+
+        tls_handshake = bytearray(tcp.data)
+        if tls_handshake[0] != TLS_HANDSHAKE:
+            continue
+
+        records = list()
+
+        try:
+            records, bytes_used = dpkt.ssl.tls_multi_factory(tcp.data)
+        except dpkt.ssl.SSL3Exception:
+            continue
+        except dpkt.dpkt.NeedData:
+            continue
+
+        if len(records) <= 0:
+            continue
+
+        for record in records:
+            if record.type != TLS_HANDSHAKE:
+                continue
+            if len(record.data) == 0:
+                continue
+            server_hello = bytearray(record.data)
+            if server_hello[0] != 2:
+                # We only want server HELLO
+                continue
+            try:
+                handshake = dpkt.ssl.TLSHandshake(record.data)
+            except dpkt.dpkt.NeedData:
+                # Looking for a handshake here
+                continue
+            if not isinstance(handshake.data, dpkt.ssl.TLSServerHello):
+                # Still not the HELLO
+                continue
+
+            server_handshake = handshake.data
+            ja3 = [str(server_handshake.version)]
+
+            # Cipher Suites (16 bit values)
+            if LooseVersion(dpkt.__version__) <= LooseVersion('1.9.1'):
+                ja3.append(str(server_handshake.cipher_suite))
+            else:
+                ja3.append(str(server_handshake.ciphersuite.code))
+            ja3 += process_extensions(server_handshake)
+            ja3 = ",".join(ja3)
+
+            record = {"source_ip": convert_ip(ip.src),
+                      "destination_ip": convert_ip(ip.dst),
+                      "source_port": tcp.sport,
+                      "destination_port": tcp.dport,
+                      "ja3": ja3,
+                      "ja3_digest": md5(ja3.encode()).hexdigest(),
+                      "timestamp": timestamp}
+            results.append(record)
+
+    return results
+
+
+def main():
+    """Intake arguments from the user and print out JA3 output."""
+    desc = "A python script for extracting JA3 fingerprints from PCAP files"
+    parser = argparse.ArgumentParser(description=(desc))
+    parser.add_argument("pcap", help="The pcap file to process")
+    help_text = "Look for client hellos on any port instead of just 443"
+    parser.add_argument("-a", "--any_port", required=False,
+                        action="store_true", default=False,
+                        help=help_text)
+    help_text = "Print out as JSON records for downstream parsing"
+    parser.add_argument("-j", "--json", required=False, action="store_true",
+                        default=False, help=help_text)
+    args = parser.parse_args()
+
+    # Use an iterator to process each line of the file
+    output = None
+    with open(args.pcap, 'rb') as fp:
+        try:
+            capture = dpkt.pcap.Reader(fp)
+        except ValueError as e_pcap:
+            try:
+                fp.seek(0, os.SEEK_SET)
+                capture = dpkt.pcapng.Reader(fp)
+            except ValueError as e_pcapng:
+                raise Exception(
+                        "File doesn't appear to be a PCAP or PCAPng: %s, %s" %
+                        (e_pcap, e_pcapng))
+        output = process_pcap(capture, any_port=args.any_port)
+
+    if args.json:
+        output = json.dumps(output, indent=4, sort_keys=True)
+        print(output)
+    else:
+        for record in output:
+            tmp = '[{dest}:{port}] JA3S: {segment} --> {digest}'
+            tmp = tmp.format(dest=record['destination_ip'],
+                             port=record['destination_port'],
+                             segment=record['ja3'],
+                             digest=record['ja3_digest'])
+            print(tmp)
+
+
+if __name__ == "__main__":
+        main()
+
+
+
+"""Generate JA3 fingerprints from PCAPs using Python."""
+
+
+__author__ = "Tommy Stallings"
+__copyright__ = "Copyright (c) 2017, salesforce.com, inc."
+__credits__ = ["John B. Althouse", "Jeff Atkinson", "Josh Atkins"]
+__license__ = "BSD 3-Clause License"
+__version__ = "1.0.1"
+__maintainer__ = "Tommy Stallings, Brandon Dixon"
+__email__ = "tommy.stallings2@gmail.com"
+
+
+SSL_PORT = 443
+TLS_HANDSHAKE = 22
+
+
+def convert_ip(value):
+    """Convert an IP address from binary to text.
+
+    :param value: Raw binary data to convert
+    :type value: str
+    :returns: str
+    """
+    try:
+        return socket.inet_ntop(socket.AF_INET, value)
+    except ValueError:
+        return socket.inet_ntop(socket.AF_INET6, value)
+
+
+def process_extensions(server_handshake):
+    """Process any extra extensions and convert to a JA3 segment.
+
+    :param client_handshake: Handshake data from the packet
+    :type client_handshake: dpkt.ssl.TLSClientHello
+    :returns: list
+    """
+    if not hasattr(server_handshake, "extensions"):
+        # Needed to preserve commas on the join
+        return [""]
+
+    exts = list()
+    for ext_val, ext_data in server_handshake.extensions:
+        exts.append(ext_val)
+
+    results = list()
+    results.append("-".join([str(x) for x in exts]))
+    return results
+
+
+def process_pcap(pcap, any_port=False):
+    """Process packets within the PCAP.
+
+    :param pcap: Opened PCAP file to be processed
+    :type pcap: dpkt.pcap.Reader
+    :param any_port: Whether or not to search for non-SSL ports
+    :type any_port: bool
+    """
+    decoder = dpkt.ethernet.Ethernet
+    linktype = pcap.datalink()
+    if linktype == dpkt.pcap.DLT_LINUX_SLL:
+        decoder = dpkt.sll.SLL
+    elif linktype == dpkt.pcap.DLT_NULL or linktype == dpkt.pcap.DLT_LOOP:
+        decoder = dpkt.loopback.Loopback
+
+    results = list()
+    for timestamp, buf in pcap:
+        try:
+            eth = decoder(buf)
+        except Exception:
+            continue
+
+        if not isinstance(eth.data, (dpkt.ip.IP, dpkt.ip6.IP6)):
+            # We want an IP packet
+            continue
+        if not isinstance(eth.data.data, dpkt.tcp.TCP):
+            # TCP only
+            continue
+
+        ip = eth.data
+        tcp = ip.data
+
+        if not (tcp.dport == SSL_PORT or tcp.sport == SSL_PORT or any_port):
+            # Doesn't match SSL port or we are picky
+            continue
+        if len(tcp.data) <= 0:
+            continue
+
+        tls_handshake = bytearray(tcp.data)
+        if tls_handshake[0] != TLS_HANDSHAKE:
+            continue
+
+        records = list()
+
+        try:
+            records, bytes_used = dpkt.ssl.tls_multi_factory(tcp.data)
+        except dpkt.ssl.SSL3Exception:
+            continue
+        except dpkt.dpkt.NeedData:
+            continue
+
+        if len(records) <= 0:
+            continue
+
+        for record in records:
+            if record.type != TLS_HANDSHAKE:
+                continue
+            if len(record.data) == 0:
+                continue
+            server_hello = bytearray(record.data)
+            if server_hello[0] != 2:
+                # We only want server HELLO
+                continue
+            try:
+                handshake = dpkt.ssl.TLSHandshake(record.data)
+            except dpkt.dpkt.NeedData:
+                # Looking for a handshake here
+                continue
+            if not isinstance(handshake.data, dpkt.ssl.TLSServerHello):
+                # Still not the HELLO
+                continue
+
+            server_handshake = handshake.data
+            ja3 = [str(server_handshake.version)]
+
+            # Cipher Suites (16 bit values)
+            if LooseVersion(dpkt.__version__) <= LooseVersion('1.9.1'):
+                ja3.append(str(server_handshake.cipher_suite))
+            else:
+                ja3.append(str(server_handshake.ciphersuite.code))
+            ja3 += process_extensions(server_handshake)
+            ja3 = ",".join(ja3)
+
+            record = {"source_ip": convert_ip(ip.src),
+                      "destination_ip": convert_ip(ip.dst),
+                      "source_port": tcp.sport,
+                      "destination_port": tcp.dport,
+                      "ja3": ja3,
+                      "ja3_digest": md5(ja3.encode()).hexdigest(),
+                      "timestamp": timestamp}
+            results.append(record)
+
+    return results
+
+
+def main():
+    """Intake arguments from the user and print out JA3 output."""
+    desc = "A python script for extracting JA3 fingerprints from PCAP files"
+    parser = argparse.ArgumentParser(description=(desc))
+    parser.add_argument("pcap", help="The pcap file to process")
+    help_text = "Look for client hellos on any port instead of just 443"
+    parser.add_argument("-a", "--any_port", required=False,
+                        action="store_true", default=False,
+                        help=help_text)
+    help_text = "Print out as JSON records for downstream parsing"
+    parser.add_argument("-j", "--json", required=False, action="store_true",
+                        default=False, help=help_text)
+    args = parser.parse_args()
+
+    # Use an iterator to process each line of the file
+    output = None
+    with open(args.pcap, 'rb') as fp:
+        try:
+            capture = dpkt.pcap.Reader(fp)
+        except ValueError as e_pcap:
+            try:
+                fp.seek(0, os.SEEK_SET)
+                capture = dpkt.pcapng.Reader(fp)
+            except ValueError as e_pcapng:
+                raise Exception(
+                        "File doesn't appear to be a PCAP or PCAPng: %s, %s" %
+                        (e_pcap, e_pcapng))
+        output = process_pcap(capture, any_port=args.any_port)
+
+    if args.json:
+        output = json.dumps(output, indent=4, sort_keys=True)
+        print(output)
+    else:
+        for record in output:
+            tmp = '[{dest}:{port}] JA3S: {segment} --> {digest}'
+            tmp = tmp.format(dest=record['destination_ip'],
+                             port=record['destination_port'],
+                             segment=record['ja3'],
+                             digest=record['ja3_digest'])
+            print(tmp)
+
+
+if __name__ == "__main__":
+        main()
+"""
+This output module converts plugin output into JSON
+"""
+
+
+class JSONOutput(Output):
+    """
+    Converts arguments for every write into JSON
+    Can be called with ensure_ascii=True to pass flag on to the json module.
+    """
+    _DEFAULT_FORMAT = "%(jsondata)s\n"
+    _DESCRIPTION = "JSON format output"
+
+    def __init__(self, *args, **kwargs):
+        self.ensure_ascii = kwargs.get('ensure_ascii', False)
+        super().__init__(*args, **kwargs)
+
+    def write(self, *args, **kwargs):
+        if self.extra:
+            # JSONOutput does not make use of the --extra flag, so disable it
+            # before printing output
+            self.extra = False
+        if args and 'data' not in kwargs:
+            kwargs['data'] = self.delimiter.join(map(str, args))
+        jsondata = json.dumps(kwargs, ensure_ascii=self.ensure_ascii, default=self.json_default)
+        super().write(jsondata=jsondata)
+
+    def json_default(self, obj):
+        """
+        JSON serializer for objects not serializable by default json code
+        https://stackoverflow.com/a/22238613
+        """
+        if isinstance(obj, datetime):
+            serial = obj.strftime(self.timeformat)
+            return serial
+        if isinstance(obj, bytes):
+            serial = repr(obj)
+            return serial
+        if isinstance(obj, (Connection, Blob, Packet)):
+            serial = obj.info()
+            return serial
+        raise TypeError ("Type not serializable ({})".format(str(type(obj))))
+
+obj = JSONOutput
+
