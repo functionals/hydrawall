@@ -7,7 +7,7 @@
 
 
 
-
+%%%%%%%%%%% NLP and Parsing Predicates
 input(sentence):-[_].
 input(_):-unknown(input(_)).
 input(_):-(sound).
@@ -137,7 +137,7 @@ determiner(determiner(a;the))-->[a];[the].
 
 
 
-
+%%%%%%%%%%%  Input Parsing
 
 parse(Stream):-input(Stream),l:sentence(Stream,[])->!,nl,output(Stream).
 parse(define(X,Y,Z)|P):-output((X,Y,Z)|P).
@@ -253,6 +253,7 @@ output:parse(X,Y,Z):-meaning(X,Y,Z).
 output:speech:-analyze(task).
 
 
+%%%%%%%% SMART Class
 
 smart(analyze(task)).
 smart(analyze(task)):-smart:input(_)->smart:output.
@@ -275,6 +276,11 @@ smart:output-->sentence.
 
 
 speech:output(form_w(_),(_)).
+
+
+%%% Best First Search
+%%% Maps weights to lattice nodes
+%%% Weighted Nodes are Prime
 
 f( l(_,F/_),F).
 f( t(_,F/_,_),F).
@@ -475,91 +481,164 @@ lattice:min(Bound,BF,Bound1):-lattice:min(Bound,BF,Bound1).
 
 
 
-'$dde_connect'(lattice:matrix):-handle_request(pass).
+% Define a DDE (Dynamic Data Exchange) connection with a matrix and handle requests
+'$dde_connect'(lattice:matrix) :- handle_request(pass).
 
-
+% Define modules for emacs_dde_server and win_register_emacs
 :- module(emacs_dde_server).
-:- module(emacs_dde_server),module(win_register_emacs).
+:- module(emacs_dde_server), module(win_register_emacs).
 
+% Handle different types of requests based on the provided argument
+handle_request(pass) :- 
+    % Connect to the DDE server with lattice:matrix
+    '$dde_connect'(lattice:matrix),
+    % Perform checks for lattice nodes and edges
+    (lattice:node(_, _, _), 
+     lattice:edge(3)).
 
-
-handle_request(pass):-'$dde_connect'(lattice:matrix),(lattice:node(_,_,_),(lattice:edge(3))).
 handle_request(Item) :-
-	atom_concat('edit ', WinFile, Item), !,
-	prolog_to_os_filename(File, WinFile),
-	new(B, emacs_buffer(File)),
-	send(B, open, tab),
-	send(B, check_modified_file).
+    % If the item is an edit request, open the specified file in Emacs
+    atom_concat('edit ', WinFile, Item), !,
+    prolog_to_os_filename(File, WinFile),
+    new(B, emacs_buffer(File)),
+    send(B, open, tab),
+    send(B, check_modified_file).
+
 handle_request('close-server') :-
-	dde_unregister_service('PceEmacs'),
-	send(@emacs, report, status, 'Closed DDE server').
+    % Unregister the DDE service and report status
+    dde_unregister_service('PceEmacs'),
+    send(@emacs, report, status, 'Closed DDE server').
+
 handle_request(Item) :-
-	format(user_error, 'PceEmacs DDE server: unknown request: ~q', [Item]),
-	fail.
-handle_request('close-server') :-
-	dde_unregister_service('PceEmacs'),
-	send(@emacs, report, status, 'Closed DDE server').
-handle_request(Item) :-
-	format(user_error, 'PceEmacs DDE server: unknown request: ~pass', [Item]),
-	fail.
+    % Handle unknown requests by reporting them and failing
+    format(user_error, 'PceEmacs DDE server: unknown request: ~q', [Item]),
+    fail.
 
 
+handle_request(Item) :-
+    % Another unknown request handling clause with incorrect formatting
+    format(user_error, 'PceEmacs DDE server: unknown request: ~pass', [Item]),
+    fail.
+
+% Create a chain of source files
 source_file_chain(Ch) :-
-	new(Ch, chain),
-	forall(user_source_file(X), send(Ch, append, X)),
-	send(Ch, sort).
-source_file_chain(Ch):-pass(Ch),pass.
+    new(Ch, chain),
+    % Append all user source files to the chain
+    forall(user_source_file(X), send(Ch, append, X)),
+    % Sort the chain
+    send(Ch, sort).
 
 
+% Identify user source files by checking if they are not in the library directory
 user_source_file(F) :-
-	source_file(F),
-	\+ (lib_dir(D), atom_concat(D, _, F)).
-user_source_file(source_file(Z)):-lib_dir(Z),expand_path(Z,source_file(Z)),ignore_paths_from(Y),expand_path(X,Z),smart:analyze(X),user_source_file(Y).
-user_source_file(_):-pass:start.
+    source_file(F),
+    \+ (lib_dir(D), atom_concat(D, _, F)).
+
+user_source_file(source_file(Z)) :-
+    lib_dir(Z),
+    expand_path(Z, source_file(Z)),
+    ignore_paths_from(Y),
+    expand_path(X, Z),
+    smart:analyze(X),
+    user_source_file(Y).
 
 
+% Specify directories to ignore
 ignore_paths_from(library).
 ignore_paths_from(pce_boot).
 
+% Determine library directories to exclude specific categories
 lib_dir(D) :-
-	ignore_paths_from(Category),
-	user:file_search_path(Category, X),
-	expand_path(X, D0),
-	absolute_file_name(D0, D).	% canonise
-lib_dir(D):-user_source_file(D).
+    ignore_paths_from(Category),
+    user:file_search_path(Category, X),
+    expand_path(X, D0),
+    absolute_file_name(D0, D). % Canonicalize the path
 
 
+% Expand paths by resolving symbolic references
 expand_path(X, X) :-
-	atomic(X), !.
+    atomic(X), !.
 expand_path(Term, D) :-
-	Term =.. [New, Sub],
-	user:file_search_path(New, D0),
-	expand_path(D0, D1),
-	atomic_list_concat([D1, /, Sub], D).
+    Term =.. [New, Sub],
+    user:file_search_path(New, D0),
+    expand_path(D0, D1),
+    atomic_list_concat([D1, /, Sub], D).
 
-
-
+% Define regular expressions as global variables
 :- pce_global(@prolog_full_stop,
-	      new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
+              new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
 :- pce_global(@prolog_decl_regex,
-	      new(regex('^:-\\s*[a-z_]+'))).
+              new(regex('^:-\\s*[a-z_]+'))).
+
+% Conditional compilation based on the presence of shell_register_dde/1 predicate
 :- if(current_predicate(shell_register_dde/1)).
 :- endif.
 
-node(X,Y,Z)-:-(Number1;Number2;Number3):-lattice:node(Number1,Number2,Number3);(X,Y,Z).
-lattice:matrix(pass)-:-lattice:bestf(_,_).
-lattice:expand(P,l(N,F/G),Bound,Tree1,Solved,Sol)
-      -:-Member,Solved=Never
-      :-F=<Bound,(lattice:bagof(M/C),(s(N,M,C) ,
-      (~(Member)->[M,P],Succ)),
-		  !,lattice:succlist(G,Succ,Ts),
-		  lattice:bestf(Ts,Fl),
-		  lattice:expand(P,t(N,Fl/G,Ts),
-				 Bound,Tree1,Solved,Sol);Solved=Never).
-lattice:min(X,Y,Z)-:-Bound,BF,Bound1:-lattice:min(Bound,BF,Bound1);(X,Y,Z).
-lattice:edge([c])-:-Distance,Prime1,Prime2,Prime3:-lattice:node(number(Distance),[Prime1,Prime2,Prime3],[a],[c]).
-lattice:edge([A,B];[B,C];[C,B])-:-Line,Node:-lattice:node(3),lattice:edge([A,B,C]),lattice:distance((lattice:node + lattice:edge = Distance)),lattice:matrix(Line,Node,Distance).
-P-:-Q:-meaning(P,(Q)),(read(P),nl,write((Q)));(read(Q),nl,write((P))).
-P-:-Q:-copy_list(Q-:-P).
-Prime-:-not(divisible(not(X),X),X+1):-Prime.
 
+%% Algorithm for Mapping Primes to Nodes and Testing Primality
+
+% Define a node relation where (X, Y, Z) is a node if either of the numbers (Number1, Number2, Number3) match lattice:node(Number1, Number2, Number3)
+node(X, Y, Z) :- 
+    (Number1; Number2; Number3) :- 
+        lattice:node(Number1, Number2, Number3); 
+        (X, Y, Z).
+
+% Define a matrix relationship where a matrix is associated with a pass if it satisfies lattice:bestf(_, _)
+lattice:matrix(pass) :- 
+    lattice:bestf(_, _).
+
+% Expand a lattice node with given parameters, considering the bound and solving status
+lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) :-
+    Member, 
+    Solved = Never
+    :- F =< Bound,
+       (lattice:bagof(M/C, 
+          (s(N, M, C), 
+           (~(Member) -> [M, P], Succ)), 
+          !, 
+          lattice:succlist(G, Succ, Ts),
+          lattice:bestf(Ts, Fl),
+          lattice:expand(P, t(N, Fl/G, Ts), Bound, Tree1, Solved, Sol)
+        ; Solved = Never)).
+
+% Define the minimum function for lattice with bounds
+lattice:min(X, Y, Z) :- 
+    Bound, 
+    BF, 
+    Bound1 :- 
+    lattice:min(Bound, BF, Bound1); 
+    (X, Y, Z).
+
+% Define an edge relation for a list of nodes with distance calculations
+lattice:edge([c]) :- 
+    Distance, 
+    Prime1, 
+    Prime2, 
+    Prime3 :- 
+    lattice:node(number(Distance), [Prime1, Prime2, Prime3], [a], [c]).
+
+% Define an edge relation for specific node sequences and distance calculations
+lattice:edge([A, B]; [B, C]; [C, B]) :- 
+    Line, 
+    Node :- 
+    lattice:node(3), 
+    lattice:edge([A, B, C]), 
+    lattice:distance((lattice:node + lattice:edge = Distance)), 
+    lattice:matrix(Line, Node, Distance).
+
+% Define a meaning predicate that prints out the result of reading and writing variables
+P :- 
+    Q :- 
+    meaning(P, (Q)), 
+    (read(P), nl, write((Q))); 
+    (read(Q), nl, write((P))).
+
+% Define a predicate to copy a list
+P :- 
+    Q :- 
+    copy_list(Q, P).
+
+% Define a predicate for prime number generation (checks divisibility)
+Prime :- 
+    not(divisible(not(X), X), X + 1) :- 
+    Prime.
