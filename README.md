@@ -4,7 +4,7 @@
 This project integrates advanced tools and techniques for network forensics, vulnerability detection, and AI-driven expert systems. It leverages the capabilities of:
 
 
-- **[CORE}(https://github.com/FunctionAnalysis/QUINE-ES/wiki/Overview)**:
+- **[CORE](https://github.com/FunctionAnalysis/QUINE-ES/wiki/Overview)**:
 -  An expert system for functional analysis and reasoning.
 - **[INTERFACE_BUFFER](https://github.com/functionals/smart)**:
 -  A system for sophisticated data processing and analysis.
