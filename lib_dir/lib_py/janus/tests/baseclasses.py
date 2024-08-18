@@ -1,3 +1,0 @@
-class myint(int):
-    pass
-

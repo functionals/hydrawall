@@ -1,2 +1,0 @@
-#cmakedefine _REENTRANT @_REENTRANT@
-#cmakedefine PYTHON3_COMPAT @PYTHON3_COMPAT@
