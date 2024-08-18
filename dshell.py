@@ -13265,3 +13265,8332 @@ class Output:
         warnings.warn("Use the write function of the PCAPOutput class", DeprecationWarning)
         self.write(*args, **kwargs)
 
+
+####################################################################
+#
+#
+#           DSHELL J THROUGH L SCRIPTS END
+#
+#
+###################################################################
+
+
+####################################################################
+#
+#
+#           DSHELL M THROUGH N SCRIPTS START
+#
+###################################################################
+
+
+"""MDNS"""
+
+logger = logging.getLogger("pypacker")
+
+FLAG_NON_AUTH_ACCEPTABLE	= 0x0010
+
+QUERY_TYPE_PTR	= 0x000C
+QUERY_CLASS_IN	= 0x0001
+
+
+def get_bts_for_msg_compression(tl_packet):
+	# DNS.Triggestlist[sub] -> sub._triggelistpacket_parent == DNS
+	if tl_packet._triggelistpacket_parent is not None:
+		return tl_packet._triggelistpacket_parent.header_bytes
+	return b""
+
+
+class MDNS(pypacker.Packet):
+	__hdr__ = (
+		("tid", "H", 0),
+		("flags", "H", 0),
+		("q_cnt", "H", 0),
+		("ans_cnt", "H", 0),
+		("aut_cnt", "H", 0),
+		("add_cnt", "H", 0),
+		("queries", None, triggerlist.TriggerList)
+	)
+
+	class Query(pypacker.Packet):
+		__hdr__ = (
+			("name", None, b""),
+			("type", "H", QUERY_TYPE_PTR),
+			("class", "H", QUERY_CLASS_IN)
+		)
+
+		name_s = pypacker.get_property_dnsname("name", get_bts_for_msg_compression)
+
+		def compress(self, ref_bts):
+			name_compressed = pypacker.compress_dns(self.name, ref_bts)
+
+			if name_compressed is not None:
+				#logger.debug("Compressable, assigning %r" % name_compressed)
+				self.name = name_compressed
+
+		def _dissect(self, buf):
+			namelen = dns.DNS.get_dns_length(buf)
+			#logger.debug("Name is: %s" % buf[:off + 1].tobytes())
+			self.name = buf[:namelen]
+			return namelen + 4
+
+	def _dissect(self, buf):
+		self.queries(buf[12:], MDNS._parse_queries)
+		return len(buf)
+
+	@staticmethod
+	def _parse_queries(buf):
+		off = 0
+		queries = []
+
+		while off < len(buf):
+			# TODO: find name length outside? But then code is doubled (also in query->dissect)
+			query = MDNS.Query(buf[off:])
+			query.body_bytes = b""
+			queries.append(query)
+
+			off += len(query)
+		return queries
+
+	def _update_fields(self):
+		# Handle compression
+		if self.queries._cached_bin is None:
+			#logger.debug("_update_fields: no cache, will compress")
+			# Something has changed in tl (element or in packet in tl) -> re-compress
+			# Start at 2nd element, avoids self-referencing of 1st to itself
+			ref_bts = self.header_bytes[:12]
+
+			for idx, val in enumerate(self.queries):
+				if type(val) == MDNS.Query:
+					val.compress(ref_bts)
+
+				entry_bts = self.queries.entry_to_bytes(idx)
+				ref_bts = ref_bts + entry_bts
+"""
+Models
+======
+
+These classes provide models for the data returned by the GeoIP2
+web service and databases.
+
+The only difference between the City and Insights model classes is which
+fields in each record may be populated. See
+https://dev.maxmind.com/geoip/docs/web-services?lang=en for more details.
+
+"""
+
+# pylint: disable=too-many-instance-attributes,too-few-public-methods
+
+class Country(SimpleEquality):
+    """Model for the Country web service and Country database.
+
+    This class provides the following attributes:
+
+    .. attribute:: continent
+
+      Continent object for the requested IP address.
+
+      :type: :py:class:`geoip2.records.Continent`
+
+    .. attribute:: country
+
+      Country object for the requested IP address. This record represents the
+      country where MaxMind believes the IP is located.
+
+      :type: :py:class:`geoip2.records.Country`
+
+    .. attribute:: maxmind
+
+      Information related to your MaxMind account.
+
+      :type: :py:class:`geoip2.records.MaxMind`
+
+    .. attribute:: registered_country
+
+      The registered country object for the requested IP address. This record
+      represents the country where the ISP has registered a given IP block in
+      and may differ from the user's country.
+
+      :type: :py:class:`geoip2.records.Country`
+
+    .. attribute:: represented_country
+
+      Object for the country represented by the users of the IP address
+      when that country is different than the country in ``country``. For
+      instance, the country represented by an overseas military base.
+
+      :type: :py:class:`geoip2.records.RepresentedCountry`
+
+    .. attribute:: traits
+
+      Object with the traits of the requested IP address.
+
+      :type: :py:class:`geoip2.records.Traits`
+
+    """
+
+    continent: geoip2.records.Continent
+    country: geoip2.records.Country
+    maxmind: geoip2.records.MaxMind
+    registered_country: geoip2.records.Country
+    represented_country: geoip2.records.RepresentedCountry
+    traits: geoip2.records.Traits
+
+    def __init__(
+        self, raw_response: Dict[str, Any], locales: Optional[List[str]] = None
+    ) -> None:
+        if locales is None:
+            locales = ["en"]
+        self._locales = locales
+        self.continent = geoip2.records.Continent(
+            locales, **raw_response.get("continent", {})
+        )
+        self.country = geoip2.records.Country(
+            locales, **raw_response.get("country", {})
+        )
+        self.registered_country = geoip2.records.Country(
+            locales, **raw_response.get("registered_country", {})
+        )
+        self.represented_country = geoip2.records.RepresentedCountry(
+            locales, **raw_response.get("represented_country", {})
+        )
+
+        self.maxmind = geoip2.records.MaxMind(**raw_response.get("maxmind", {}))
+
+        self.traits = geoip2.records.Traits(**raw_response.get("traits", {}))
+        self.raw = raw_response
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__module__}.{self.__class__.__name__}({self.raw}, {self._locales})"
+        )
+
+
+class City(Country):
+    """Model for the City Plus web service and the City database.
+
+    .. attribute:: city
+
+      City object for the requested IP address.
+
+      :type: :py:class:`geoip2.records.City`
+
+    .. attribute:: continent
+
+      Continent object for the requested IP address.
+
+      :type: :py:class:`geoip2.records.Continent`
+
+    .. attribute:: country
+
+      Country object for the requested IP address. This record represents the
+      country where MaxMind believes the IP is located.
+
+      :type: :py:class:`geoip2.records.Country`
+
+    .. attribute:: location
+
+      Location object for the requested IP address.
+
+      :type: :py:class:`geoip2.records.Location`
+
+    .. attribute:: maxmind
+
+      Information related to your MaxMind account.
+
+      :type: :py:class:`geoip2.records.MaxMind`
+
+    .. attribute:: postal
+
+      Postal object for the requested IP address.
+
+      :type: :py:class:`geoip2.records.Postal`
+
+    .. attribute:: registered_country
+
+      The registered country object for the requested IP address. This record
+      represents the country where the ISP has registered a given IP block in
+      and may differ from the user's country.
+
+      :type: :py:class:`geoip2.records.Country`
+
+    .. attribute:: represented_country
+
+      Object for the country represented by the users of the IP address
+      when that country is different than the country in ``country``. For
+      instance, the country represented by an overseas military base.
+
+      :type: :py:class:`geoip2.records.RepresentedCountry`
+
+    .. attribute:: subdivisions
+
+      Object (tuple) representing the subdivisions of the country to which
+      the location of the requested IP address belongs.
+
+      :type: :py:class:`geoip2.records.Subdivisions`
+
+    .. attribute:: traits
+
+      Object with the traits of the requested IP address.
+
+      :type: :py:class:`geoip2.records.Traits`
+
+    """
+
+    city: geoip2.records.City
+    location: geoip2.records.Location
+    postal: geoip2.records.Postal
+    subdivisions: geoip2.records.Subdivisions
+
+    def __init__(
+        self, raw_response: Dict[str, Any], locales: Optional[List[str]] = None
+    ) -> None:
+        super().__init__(raw_response, locales)
+        self.city = geoip2.records.City(locales, **raw_response.get("city", {}))
+        self.location = geoip2.records.Location(**raw_response.get("location", {}))
+        self.postal = geoip2.records.Postal(**raw_response.get("postal", {}))
+        self.subdivisions = geoip2.records.Subdivisions(
+            locales, *raw_response.get("subdivisions", [])
+        )
+
+
+class Insights(City):
+    """Model for the GeoIP2 Insights web service.
+
+    .. attribute:: city
+
+      City object for the requested IP address.
+
+      :type: :py:class:`geoip2.records.City`
+
+    .. attribute:: continent
+
+      Continent object for the requested IP address.
+
+      :type: :py:class:`geoip2.records.Continent`
+
+    .. attribute:: country
+
+      Country object for the requested IP address. This record represents the
+      country where MaxMind believes the IP is located.
+
+      :type: :py:class:`geoip2.records.Country`
+
+    .. attribute:: location
+
+      Location object for the requested IP address.
+
+    .. attribute:: maxmind
+
+      Information related to your MaxMind account.
+
+      :type: :py:class:`geoip2.records.MaxMind`
+
+    .. attribute:: registered_country
+
+      The registered country object for the requested IP address. This record
+      represents the country where the ISP has registered a given IP block in
+      and may differ from the user's country.
+
+      :type: :py:class:`geoip2.records.Country`
+
+    .. attribute:: represented_country
+
+      Object for the country represented by the users of the IP address
+      when that country is different than the country in ``country``. For
+      instance, the country represented by an overseas military base.
+
+      :type: :py:class:`geoip2.records.RepresentedCountry`
+
+    .. attribute:: subdivisions
+
+      Object (tuple) representing the subdivisions of the country to which
+      the location of the requested IP address belongs.
+
+      :type: :py:class:`geoip2.records.Subdivisions`
+
+    .. attribute:: traits
+
+      Object with the traits of the requested IP address.
+
+      :type: :py:class:`geoip2.records.Traits`
+
+    """
+
+
+class Enterprise(City):
+    """Model for the GeoIP2 Enterprise database.
+
+    .. attribute:: city
+
+      City object for the requested IP address.
+
+      :type: :py:class:`geoip2.records.City`
+
+    .. attribute:: continent
+
+      Continent object for the requested IP address.
+
+      :type: :py:class:`geoip2.records.Continent`
+
+    .. attribute:: country
+
+      Country object for the requested IP address. This record represents the
+      country where MaxMind believes the IP is located.
+
+      :type: :py:class:`geoip2.records.Country`
+
+    .. attribute:: location
+
+      Location object for the requested IP address.
+
+    .. attribute:: maxmind
+
+      Information related to your MaxMind account.
+
+      :type: :py:class:`geoip2.records.MaxMind`
+
+    .. attribute:: registered_country
+
+      The registered country object for the requested IP address. This record
+      represents the country where the ISP has registered a given IP block in
+      and may differ from the user's country.
+
+      :type: :py:class:`geoip2.records.Country`
+
+    .. attribute:: represented_country
+
+      Object for the country represented by the users of the IP address
+      when that country is different than the country in ``country``. For
+      instance, the country represented by an overseas military base.
+
+      :type: :py:class:`geoip2.records.RepresentedCountry`
+
+    .. attribute:: subdivisions
+
+      Object (tuple) representing the subdivisions of the country to which
+      the location of the requested IP address belongs.
+
+      :type: :py:class:`geoip2.records.Subdivisions`
+
+    .. attribute:: traits
+
+      Object with the traits of the requested IP address.
+
+      :type: :py:class:`geoip2.records.Traits`
+
+    """
+
+
+class SimpleModel(SimpleEquality, metaclass=ABCMeta):
+    """Provides basic methods for non-location models"""
+
+    raw: Dict[str, Union[bool, str, int]]
+    ip_address: str
+    _network: Optional[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]]
+    _prefix_len: int
+
+    def __init__(self, raw: Dict[str, Union[bool, str, int]]) -> None:
+        self.raw = raw
+        self._network = None
+        self._prefix_len = cast(int, raw.get("prefix_len"))
+        self.ip_address = cast(str, raw.get("ip_address"))
+
+    def __repr__(self) -> str:
+        return f"{self.__module__}.{self.__class__.__name__}({self.raw})"
+
+    @property
+    def network(self) -> Optional[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]]:
+        """The network for the record"""
+        # This code is duplicated for performance reasons
+        network = self._network
+        if network is not None:
+            return network
+
+        ip_address = self.ip_address
+        prefix_len = self._prefix_len
+        if ip_address is None or prefix_len is None:
+            return None
+        network = ipaddress.ip_network(f"{ip_address}/{prefix_len}", False)
+        self._network = network
+        return network
+
+
+class AnonymousIP(SimpleModel):
+    """Model class for the GeoIP2 Anonymous IP.
+
+    This class provides the following attribute:
+
+    .. attribute:: is_anonymous
+
+      This is true if the IP address belongs to any sort of anonymous network.
+
+      :type: bool
+
+    .. attribute:: is_anonymous_vpn
+
+      This is true if the IP address is registered to an anonymous VPN
+      provider.
+
+      If a VPN provider does not register subnets under names associated with
+      them, we will likely only flag their IP ranges using the
+      ``is_hosting_provider`` attribute.
+
+      :type: bool
+
+    .. attribute:: is_hosting_provider
+
+      This is true if the IP address belongs to a hosting or VPN provider
+      (see description of ``is_anonymous_vpn`` attribute).
+
+      :type: bool
+
+    .. attribute:: is_public_proxy
+
+      This is true if the IP address belongs to a public proxy.
+
+      :type: bool
+
+    .. attribute:: is_residential_proxy
+
+      This is true if the IP address is on a suspected anonymizing network
+      and belongs to a residential ISP.
+
+      :type: bool
+
+    .. attribute:: is_tor_exit_node
+
+      This is true if the IP address is a Tor exit node.
+
+      :type: bool
+
+    .. attribute:: ip_address
+
+      The IP address used in the lookup.
+
+      :type: str
+
+    .. attribute:: network
+
+      The network associated with the record. In particular, this is the
+      largest network where all of the fields besides ip_address have the same
+      value.
+
+      :type: ipaddress.IPv4Network or ipaddress.IPv6Network
+    """
+
+    is_anonymous: bool
+    is_anonymous_vpn: bool
+    is_hosting_provider: bool
+    is_public_proxy: bool
+    is_residential_proxy: bool
+    is_tor_exit_node: bool
+
+    def __init__(self, raw: Dict[str, bool]) -> None:
+        super().__init__(raw)  # type: ignore
+        self.is_anonymous = raw.get("is_anonymous", False)
+        self.is_anonymous_vpn = raw.get("is_anonymous_vpn", False)
+        self.is_hosting_provider = raw.get("is_hosting_provider", False)
+        self.is_public_proxy = raw.get("is_public_proxy", False)
+        self.is_residential_proxy = raw.get("is_residential_proxy", False)
+        self.is_tor_exit_node = raw.get("is_tor_exit_node", False)
+
+
+class ASN(SimpleModel):
+    """Model class for the GeoLite2 ASN.
+
+    This class provides the following attribute:
+
+    .. attribute:: autonomous_system_number
+
+      The autonomous system number associated with the IP address.
+
+      :type: int
+
+    .. attribute:: autonomous_system_organization
+
+      The organization associated with the registered autonomous system number
+      for the IP address.
+
+      :type: str
+
+    .. attribute:: ip_address
+
+      The IP address used in the lookup.
+
+      :type: str
+
+    .. attribute:: network
+
+      The network associated with the record. In particular, this is the
+      largest network where all of the fields besides ip_address have the same
+      value.
+
+      :type: ipaddress.IPv4Network or ipaddress.IPv6Network
+    """
+
+    autonomous_system_number: Optional[int]
+    autonomous_system_organization: Optional[str]
+
+    # pylint:disable=too-many-arguments
+    def __init__(self, raw: Dict[str, Union[str, int]]) -> None:
+        super().__init__(raw)
+        self.autonomous_system_number = cast(
+            Optional[int], raw.get("autonomous_system_number")
+        )
+        self.autonomous_system_organization = cast(
+            Optional[str], raw.get("autonomous_system_organization")
+        )
+
+
+class ConnectionType(SimpleModel):
+    """Model class for the GeoIP2 Connection-Type.
+
+    This class provides the following attribute:
+
+    .. attribute:: connection_type
+
+      The connection type may take the following values:
+
+      - Dialup
+      - Cable/DSL
+      - Corporate
+      - Cellular
+      - Satellite
+
+      Additional values may be added in the future.
+
+      :type: str
+
+    .. attribute:: ip_address
+
+      The IP address used in the lookup.
+
+      :type: str
+
+    .. attribute:: network
+
+      The network associated with the record. In particular, this is the
+      largest network where all of the fields besides ip_address have the same
+      value.
+
+      :type: ipaddress.IPv4Network or ipaddress.IPv6Network
+    """
+
+    connection_type: Optional[str]
+
+    def __init__(self, raw: Dict[str, Union[str, int]]) -> None:
+        super().__init__(raw)
+        self.connection_type = cast(Optional[str], raw.get("connection_type"))
+
+
+class Domain(SimpleModel):
+    """Model class for the GeoIP2 Domain.
+
+    This class provides the following attribute:
+
+    .. attribute:: domain
+
+      The domain associated with the IP address.
+
+      :type: str
+
+    .. attribute:: ip_address
+
+      The IP address used in the lookup.
+
+      :type: str
+
+    .. attribute:: network
+
+      The network associated with the record. In particular, this is the
+      largest network where all of the fields besides ip_address have the same
+      value.
+
+      :type: ipaddress.IPv4Network or ipaddress.IPv6Network
+
+    """
+
+    domain: Optional[str]
+
+    def __init__(self, raw: Dict[str, Union[str, int]]) -> None:
+        super().__init__(raw)
+        self.domain = cast(Optional[str], raw.get("domain"))
+
+
+class ISP(ASN):
+    """Model class for the GeoIP2 ISP.
+
+    This class provides the following attribute:
+
+    .. attribute:: autonomous_system_number
+
+      The autonomous system number associated with the IP address.
+
+      :type: int
+
+    .. attribute:: autonomous_system_organization
+
+      The organization associated with the registered autonomous system number
+      for the IP address.
+
+      :type: str
+
+    .. attribute:: isp
+
+      The name of the ISP associated with the IP address.
+
+      :type: str
+
+    .. attribute: mobile_country_code
+
+      The `mobile country code (MCC)
+      <https://en.wikipedia.org/wiki/Mobile_country_code>`_ associated with the
+      IP address and ISP.
+
+      :type: str
+
+    .. attribute: mobile_network_code
+
+      The `mobile network code (MNC)
+      <https://en.wikipedia.org/wiki/Mobile_country_code>`_ associated with the
+      IP address and ISP.
+
+      :type: str
+
+    .. attribute:: organization
+
+      The name of the organization associated with the IP address.
+
+      :type: str
+
+    .. attribute:: ip_address
+
+      The IP address used in the lookup.
+
+      :type: str
+
+    .. attribute:: network
+
+      The network associated with the record. In particular, this is the
+      largest network where all of the fields besides ip_address have the same
+      value.
+
+      :type: ipaddress.IPv4Network or ipaddress.IPv6Network
+    """
+
+    isp: Optional[str]
+    mobile_country_code: Optional[str]
+    mobile_network_code: Optional[str]
+    organization: Optional[str]
+
+    # pylint:disable=too-many-arguments
+    def __init__(self, raw: Dict[str, Union[str, int]]) -> None:
+        super().__init__(raw)
+        self.isp = cast(Optional[str], raw.get("isp"))
+        self.mobile_country_code = cast(Optional[str], raw.get("mobile_country_code"))
+        self.mobile_network_code = cast(Optional[str], raw.get("mobile_network_code"))
+        self.organization = cast(Optional[str], raw.get("organization"))
+"""This package contains utility mixins"""
+
+# pylint: disable=too-few-public-methods
+
+class SimpleEquality(metaclass=ABCMeta):
+    """Naive __dict__ equality mixin"""
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+"""
+Message Queuing Telemetry Transport (MQTT)
+https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html
+
+Note: Most lengths are *not* en/decoded via special MQTT format (see MQTTBase.en/decode_length())
+but via standard pack/unpack. Change to more complex/inperformant en/decoding if needed.
+"""
+
+logger = logging.getLogger("pypacker")
+
+# Message Types:
+MSGTYPE_RESERVED = 0
+MSGTYPE_CONNECT = 1
+MSGTYPE_CONNACK = 2
+MSGTYPE_PUBLISH = 3
+MSGTYPE_PUBACK = 4
+MSGTYPE_PUBRECV = 5
+MSGTYPE_PUBREL = 6
+MSGTYPE_PUBCOMPLETE = 7
+MSGTYPE_SUBSCRIBEREQ = 8
+MSGTYPE_SUBSCRIBEACK = 9
+MSGTYPE_UNSUBSCRIBE = 10
+MSGTYPE_UNSUBACK = 11
+MSGTYPE_PINGREQ = 12
+MSGTYPE_PINGRESP = 13
+MSGTYPE_DISCONNECT = 14
+
+
+class MQTTBase(Packet):
+	__hdr__ = (
+		("flags", "B", 1),
+		("mlen", None, b"\x00")  # 0xF000 = 11110000 00000000 = [one more byte] 1110000 [no more byte] 0000000
+	)
+
+	class Connect(Packet):
+		__hdr__ = (
+			("pnamelen", "H", 0),
+			("pname", None, b""),
+			("version", "B", 0),
+			("conflags", "B", 0),
+			("keepalive", "H", 0),
+			("clientidlen", "H", 0),
+			("clientid", None, b"")
+		)
+
+		def _dissect(self, buf):
+			pnamelen = unpack_H(buf[:2])[0]
+			self.pname = buf[2: 2 + pnamelen]
+			off_clientidlen = 2 + pnamelen + 1 + 1 + 2
+			clientidlen = unpack_H(buf[off_clientidlen: off_clientidlen + 2])[0]
+			off_clientid = off_clientidlen + 2
+			self.clientid = buf[off_clientid: off_clientid + clientidlen]
+			return 8 + pnamelen + clientidlen
+
+	def _dissect(self, buf):
+		# Length MUST be decoded, flexible format but more imperformant bc parsing needed
+		mlen_len, _ = MQTTBase.decode_length(buf[1:])
+		self.mlen = buf[1: 1 + mlen_len]
+		hlen = 1 + mlen_len
+
+		return hlen, (buf[0] & 0xF0) >> 4
+
+	class ConnAck(Packet):
+		__hdr__ = (
+			("flags", "B", 0),
+			("retcode", "B", 0)
+		)
+
+	class Publish(Packet):
+		__hdr__ = (
+			("topiclen", "H", 0),
+			("topic", None, b""),
+			("msgid", "H", 0)
+		)
+
+		def _dissect(self, buf):
+			topiclen = unpack_H(buf[:2])[0]
+			self.topic = buf[2: 2 + topiclen]
+
+			return 2 + topiclen + 2
+
+	class PubAck(Packet):
+		__hdr__ = (
+			("msgid", "H", 0),
+		)
+
+	class PubRecv(Packet):
+		__hdr__ = (
+			("msgid", "H", 0),
+		)
+
+	class PubRel(Packet):
+		__hdr__ = (
+			("msgid", "H", 0),
+		)
+
+	class PubComplete(Packet):
+		__hdr__ = (
+			("msgid", "H", 0),
+		)
+
+	class SubRequest(Packet):
+		__hdr__ = (
+			("msgid", "H", 0),
+			("topiclen", "H", 0),
+			("topic", None, b""),
+			("qos", "B", 0)
+		)
+
+		def _dissect(self, buf):
+			topiclen = unpack_H(buf[2: 4])[0]
+			self.topic = buf[4: 4 + topiclen]
+
+			return 5 + topiclen
+
+	class SubAck(Packet):
+		__hdr__ = (
+			("msgid", "H", 0),
+			("retcode", "B", 0)
+		)
+
+	class Unsubscribe(Packet):
+		__hdr__ = (
+			("msgid", "H", 0),
+		)
+
+	class UnsubAck(Packet):
+		__hdr__ = (
+			("msgid", "H", 0),
+		)
+
+	class PingReq(Packet):
+		__hdr__ = (
+		)
+
+	class PingResp(Packet):
+		__hdr__ = (
+		)
+
+	class Discconnect(Packet):
+		__hdr__ = (
+		)
+
+	@staticmethod
+	def decode_length(buf):
+		"""return -- mlen length in bytes, mlen value"""
+		if buf[0] == 0x00:
+			return 1, 0
+		buf_idx = 0
+		current_bt = buf[buf_idx]
+		retval = current_bt & 0x7F
+
+		while current_bt & 0x80 != 0 and buf_idx < len(buf):
+			buf_idx += 1
+			current_bt = buf[buf_idx]
+			retval += (current_bt & 0x7F) << 7 * buf_idx
+		return 1 + buf_idx, retval
+
+	@staticmethod
+	def encode_length(num):
+		"""
+		num -- Positive integer like 256
+		return -- Encoded number as bytes like b"\x81\xff"
+		"""
+		bts = []
+		while num > 0:
+			tbenc = num % 128
+			num = int(num / 128)
+			hbit = 0x80 if num > 0 else 0
+			bts.append(pack_B(hbit | tbenc))
+
+		return b"".join(bts)
+
+	def _get_mlen(self):
+		return MQTTBase.decode_length(self.mlen)[1]
+
+	def _set_mlen(self, val):
+		self.mlen = MQTTBase.encode_length(val)
+
+	mlen_d = property(_get_mlen, _set_mlen)
+
+	def _get_msgtype(self):
+		return (self.flags & 0xF0) >> 4
+
+	def _set_msgtype(self, val):
+		self.flags = (val & 0x0F) << 4 | (self.flags & 0x0F)
+
+	msgtype = property(_get_msgtype, _set_msgtype)
+
+	__handler__ = {
+		MSGTYPE_CONNECT: Connect,
+		MSGTYPE_CONNACK: ConnAck,
+		MSGTYPE_PUBLISH: Publish,
+		MSGTYPE_PUBACK: PubAck,
+		MSGTYPE_PUBRECV: PubRecv,
+		MSGTYPE_PUBREL: PubRel,
+		MSGTYPE_PUBCOMPLETE: PubComplete,
+		MSGTYPE_SUBSCRIBEREQ: SubRequest,
+		MSGTYPE_SUBSCRIBEACK: SubAck,
+		MSGTYPE_UNSUBSCRIBE: Unsubscribe,
+		MSGTYPE_UNSUBACK: UnsubAck,
+		MSGTYPE_PINGREQ: PingReq,
+		MSGTYPE_PINGRESP: PingResp,
+		MSGTYPE_DISCONNECT: Discconnect
+	}
+
+"""
+Proof-of-concept code to detect attempts to enumerate MS15-034 vulnerable
+IIS servers and/or cause a denial of service.  Each event will generate an
+alert that prints out the HTTP Request method and the range value contained
+with the HTTP stream.
+"""
+
+
+class DshellPlugin(HTTPPlugin):
+    def __init__(self):
+        super().__init__(
+            name="ms15-034",
+            author="bg",
+            description='detect attempts to enumerate MS15-034 vulnerable IIS servers',
+            bpf='tcp and (port 80 or port 8080 or port 8000)',
+            output=AlertOutput(label=__name__),
+            longdescription='''
+Proof-of-concept code to detect attempts to enumerate MS15-034 vulnerable
+IIS servers and/or cause a denial of service.  Each event will generate an
+alert that prints out the HTTP Request method and the range value contained
+with the HTTP stream.
+
+Usage:
+decode -d ms15-034 -q *.pcap
+decode -d ms15-034 -i <interface> -q
+
+References:
+https://technet.microsoft.com/library/security/ms15-034
+https://ma.ttias.be/remote-code-execution-via-http-request-in-iis-on-windows/
+''',
+        )
+
+
+    def http_handler(self, conn, request, response):
+        if response == None:
+            # Denial of Service (no server response)
+            try:
+                rangestr = request.headers.get("range", '')
+                # check range value to reduce false positive rate
+                if not rangestr.endswith('18446744073709551615'):
+                    return
+            except:
+                return
+            self.write('MS15-034 DoS [Request Method: "{0}" URI: "{1}" Range: "{2}"]'.format(request.method, request.uri, rangestr), conn.info())
+            return conn, request, response
+
+        else:
+            # probing for vulnerable server
+            try:
+                rangestr = request.headers.get("range", '')
+                if not rangestr.endswith('18446744073709551615'):
+                    return
+            except:
+                return
+
+            # indication of vulnerable server
+            if rangestr and (response.status == '416' or \
+                             response.reason == 'Requested Range Not Satisfiable'):
+                self.write('MS15-034 Vulnerable Server  [Request Method: "{0}" Range: "{1}"]'.format(request.method,rangestr), conn.info())
+                return conn, request, response
+
+
+"""
+NBNS plugin
+"""
+
+
+# A few common NBNS Protocol Info Opcodes
+# Due to a typo in RFC 1002, 0x9 is also acceptable, but rarely used 
+#   for 'NetBios Refresh'
+# 'NetBios Multi-Homed Name Regsitration' (0xf) was added after the RFC
+nbns_op = { 0: 'NB_NAME_QUERY', 
+            5: 'NB_REGISTRATION',
+            6: 'NB_RELEASE', 
+            7: 'NB_WACK',
+            8: 'NB_REFRESH',
+            9: 'NB_REFRESH', 
+            15: 'NB_MULTI_HOME_REG' }
+
+
+class DshellPlugin(dshell.core.PacketPlugin):
+    def __init__(self):
+        super().__init__(   name='nbns',
+                            description='Extract client information from NBNS traffic',
+                            longdescription="""
+The nbns (NetBIOS Name Service) plugin will extract the Transaction ID, Protocol Info, 
+Client Hostname, and Client MAC address from every UDP NBNS packet found in the given 
+pcap using port 137.  UDP is the standard transport protocol for NBNS traffic.
+This filter pulls pertinent information from NBNS packets.
+
+Examples:
+
+    General usage:
+
+        decode -d nbns <pcap>
+
+            This will display the connection info including the timestamp,
+            the source IP, destination IP, Transaction ID, Protocol Info,
+            Client Hostname, and the Client MAC address in a tabular format.
+
+
+    Malware Traffic Analysis Exercise Traffic from 2014-12-08 where a user was hit with a Fiesta exploit kit:
+        <http://www.malware-traffic-analysis.net/2014/12/08/2014-12-08-traffic-analysis-exercise.pcap>
+    We want to find out more about the infected machine, and some of this information can be pulled from NBNS traffic
+
+        decode -d nbns 2014-12-08-traffic-analysis-exercise.pcap
+
+          OUTPUT (first few packets):
+            [nbns] 2014-12-08 18:19:13  192.168.204.137:137   ->    192.168.204.2:137   ** 
+                    Transaction ID:         0xb480   
+                    Info:                   NB_NAME_QUERY    
+                    Client Hostname:        WPAD             
+                    Client MAC:             00:0C:29:9D:B8:6D 
+             **
+            [nbns] 2014-12-08 18:19:14  192.168.204.137:137   ->    192.168.204.2:137   ** 
+                    Transaction ID:         0xb480   
+                    Info:                   NB_NAME_QUERY    
+                    Client Hostname:        WPAD             
+                    Client MAC:             00:0C:29:9D:B8:6D 
+             **
+            [nbns] 2014-12-08 18:19:16  192.168.204.137:137   ->    192.168.204.2:137   ** 
+                    Transaction ID:         0xb480   
+                    Info:                   NB_NAME_QUERY    
+                    Client Hostname:        WPAD             
+                    Client MAC:             00:0C:29:9D:B8:6D 
+             **
+            [nbns] 2014-12-08 18:19:17  192.168.204.137:137   ->  192.168.204.255:137   ** 
+                    Transaction ID:         0xb480   
+                    Info:                   NB_NAME_QUERY    
+                    Client Hostname:        WPAD             
+                    Client MAC:             00:0C:29:9D:B8:6D 
+             **
+  """,
+                            bpf='(udp and port 137)',
+                            output=AlertOutput(label=__name__),
+                            author='dek',
+                            )
+        self.mac_address = None
+        self.client_hostname = None
+        self.xid = None
+        self.prot_info = None
+        
+
+    def packet_handler(self, pkt):
+        
+        # iterate through the layers and find the NBNS layer
+        nbns_packet = pkt.pkt.upper_layer
+        try:
+            nbns_packet = nbns_packet.upper_layer
+        except IndexError as e:
+            self.logger.error('{}: could not parse session data \
+                      (NBNS packet not found)'.format(str(e)))
+            # pypacker may throw an Exception here; could use 
+            #   further testing
+            return
+
+
+        # Extract the Client hostname from the connection data
+        # It is represented as 32-bytes half-ASCII
+        try:
+            nbns_name = unpack('32s', pkt.data[13:45])[0]
+        except Exception as e:
+            self.logger.error('{}: (NBNS packet not found)'.format(str(e)))
+            return
+
+
+        # Decode the 32-byte half-ASCII name to its 16 byte NetBIOS name
+        try:
+            if len(nbns_name) == 32:
+                decoded = []
+                for i in range(0,32,2):
+                    nibl = hex(ord(chr(nbns_name[i])) - ord('A'))[2:]
+                    nibh = hex(ord(chr(nbns_name[i+1])) - ord('A'))[2:]
+                    decoded.append(chr(int(''.join((nibl, nibh)), 16)))
+
+                # For uniformity, strip excess byte and space chars
+                self.client_hostname = ''.join(decoded)[0:-1].strip()
+            else:
+                self.client_hostname = str(nbns_name)
+
+        except ValueError as e:
+            self.logger.error('{}: Hostname in improper format \
+                      (NBNS packet not found)'.format(str(e)))
+            return
+
+
+        # Extract the Transaction ID from the NBNS packet
+        xid = unpack('2s', pkt.data[0:2])[0]
+        self.xid = "0x{}".format(xid.hex())
+
+        # Extract the opcode info from the NBNS Packet
+        op = unpack('2s', pkt.data[2:4])[0]
+        op_hex = op.hex()
+        op = int(op_hex, 16)
+        # Remove excess bits
+        op = (op >> 11) & 15
+
+        # Decode protocol info if it was present in the payload
+        try: 
+            self.prot_info = nbns_op[op]
+        except:
+            self.prot_info = "0x{}".format(op_hex)
+
+        # Extract the MAC address from the ethernet layer of the packet
+        self.mac_address = pkt.smac 
+
+        # Allow for unknown hostnames
+        if not self.client_hostname:
+            self.client_hostname = "" 
+
+        if self.xid and self.prot_info and self.client_hostname and self.mac_address:
+            self.write('\n\tTransaction ID:\t\t{:<8} \n\tInfo:\t\t\t{:<16} \n\tClient Hostname:\t{:<16} \n\tClient MAC:\t\t{:<18}\n'.format(
+                        self.xid, self.prot_info, self.client_hostname, self.mac_address), **pkt.info(), dir_arrow='->')
+            return pkt
+
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+"""
+Collects and displays statistics about connections (a.k.a. flow data)
+"""
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            name="Netflow",
+            description="Collects and displays flow statistics about connections",
+            author="dev195",
+            bpf="ip or ip6",
+            output=NetflowOutput(label=__name__),
+            longdescription="""
+Collect and display flow statistics about connections.
+
+It will reassemble connections and print one row for each flow keyed by
+address four-tuple. Each row, by default, will have the following fields:
+
+- Start Time : the timestamp of the first packet for a connection
+- Client IP  : the IP address of the host that initiated the connection
+- Server IP  : the IP address of the host that receives the connection
+  (note: client/server designation is based on first packet seen for a connection)
+- Client Country : the country code for the client IP address
+- Server Country : the country code for the server IP address
+- Protocol   : the layer-3 protocol of the connection
+- Client Port: port number used by client
+- Server Port: port number used by server
+- Client Packets : number of data-carrying packets from the client
+- Server Packets : number of data-carrying packets from the server
+  (note: packet counts ignore packets without data, e.g. handshakes, ACKs, etc.)
+- Client Bytes   : total bytes sent by the client
+- Server Bytes   : total bytes sent by the server
+- Duration   : time between the first packet and final packet of a connection
+- Message Data: extra field not used by this plugin
+"""
+        )
+
+    def connection_handler(self, conn):
+        self.write(**conn.info())
+        return conn
+"""
+This output module is used for generating flow-format output
+"""
+
+
+class NetflowOutput(Output):
+    """
+    A class for printing connection information for pcap
+
+    Output can be grouped by setting the group flag to a field or fields
+    separated by a forward-slash
+    For example:
+      --output=netflowout --oarg="group=clientip/serverip"
+    Note: Output when grouping is only generated at the end of analysis
+
+    A header row can be printed before output using --oarg header
+    """
+
+    _DESCRIPTION = "Flow (connection overview) format output"
+    # Define two types of formats:
+    # Those for plugins handling individual packets (not really helpful)
+    _PACKET_FORMAT = "%(ts)s  %(sip)16s -> %(dip)16s  (%(sipcc)s -> %(dipcc)s) %(protocol)5s  %(sport)6s  %(dport)6s %(bytes)7s %(data)s\n"
+    _PACKET6_FORMAT = "%(ts)s  %(sip)40s -> %(dip)40s  (%(sipcc)s -> %(dipcc)s) %(protocol)5s  %(sport)6s  %(dport)6s %(bytes)7s %(data)s\n"
+    _PACKET_PRETTY_HEADER = "[start timestamp] [source IP] -> [destination IP] ([source country] -> [destination country]) [protocol] [source port] [destination port] [bytes] [message data]\n"
+    # And those plugins handling full connections (more useful and common)
+    _CONNECTION_FORMAT = "%(starttime)s  %(clientip)16s -> %(serverip)16s  (%(clientcc)s -> %(servercc)s) %(protocol)5s  %(clientport)6s  %(serverport)6s %(clientpackets)5s  %(serverpackets)5s  %(clientbytes)7s  %(serverbytes)7s  %(duration)-.4fs %(data)s\n"
+    _CONNECTION6_FORMAT = "%(starttime)s  %(clientip)40s -> %(serverip)40s  (%(clientcc)s -> %(servercc)s) %(protocol)5s  %(clientport)6s  %(serverport)6s %(clientpackets)5s  %(serverpackets)5s  %(clientbytes)7s  %(serverbytes)7s  %(duration)-.4fs %(data)s\n"
+    _CONNECTION_PRETTY_HEADER = "[start timestamp] [client IP] -> [server IP] ([client country] -> [server country]) [protocol] [client port] [server port] [client packets] [server packets] [client bytes] [server bytes] [duration] [message data]\n"
+    # TODO decide if IPv6 formats are necessary, and how to switch between them
+    #      and IPv4 formats
+    # Default to packets since those fields are in both types of object
+    _DEFAULT_FORMAT = _PACKET_FORMAT
+
+    def __init__(self, *args, **kwargs):
+        self.group = False
+        self.group_cache = {}  # results will be stored here, if grouping
+        self.format_is_set = False
+        self.use_header = False
+        Output.__init__(self, *args, **kwargs)
+
+    def set_format(self, fmt, pretty_header=_PACKET_PRETTY_HEADER):
+        if self.use_header:
+            self.fh.write(str(pretty_header))
+        return super().set_format(fmt)
+
+    def set_oargs(self, **kwargs):
+        # Are we printing the format string as a file header?
+        self.use_header = kwargs.pop("header", False)
+        # Are we grouping the results, and by what fields?
+        if 'group' in kwargs:
+            self.group = True
+            groupfields = kwargs.pop('group', '')
+            self.group_fields = groupfields.split('/')
+        else:
+            self.group = False
+        super().set_oargs(**kwargs)
+
+    def write(self, *args, **kwargs):
+        # Change output format depending on if we're handling a connection or
+        # a single packet
+        if not self.format_is_set:
+            if "clientip" in kwargs:
+                self.set_format(self._CONNECTION_FORMAT, self._CONNECTION_PRETTY_HEADER)
+            else:
+                self.set_format(self._PACKET_FORMAT, self._PACKET_PRETTY_HEADER)
+            self.format_is_set = True
+
+        if self.group:
+            # If grouping, check if the IP tuple is in the cache already.
+            # If not, check the reverse of the tuple (i.e. opposite direction)
+            try:
+                key = tuple([kwargs[g] for g in self.group_fields])
+            except KeyError as e:
+                Output.write(self, *args, **kwargs)
+                return
+            if key not in self.group_cache:
+                rkey = key[::-1]
+                if rkey in self.group_cache:
+                    key = rkey
+                else:
+                    self.group_cache[key] = []
+            self.group_cache[key].append(kwargs)
+        else:
+            # If not grouping, just write out the connection immediately
+            Output.write(self, *args, **kwargs)
+
+    def close(self):
+        if self.group:
+            self.group = False # we're done grouping, so turn it off
+            for key in self.group_cache.keys():
+                # write header by mapping key index with user's group list
+                self.fh.write(' '.join([
+                    '%s=%s' % (self.group_fields[i], key[i]) for i in range(len(self.group_fields))])
+                    + "\n")
+                for kw in self.group_cache[key]:
+                    self.fh.write("\t")
+                    Output.write(self, **kw)
+                self.fh.write("\n")
+        Output.close(self)
+
+obj = NetflowOutput
+
+"""Network Time Protocol v4"""
+
+logger = logging.getLogger("pypacker")
+
+# Leap Indicator (LI) Codes
+NO_WARNING		= 0
+LAST_MINUTE_61_SECONDS	= 1
+LAST_MINUTE_59_SECONDS	= 2
+ALARM_CONDITION		= 3
+
+# Mode Codes
+RESERVED		= 0
+SYMMETRIC_ACTIVE	= 1
+SYMMETRIC_PASSIVE	= 2
+CLIENT			= 3
+SERVER			= 4
+BROADCAST		= 5
+CONTROL_MESSAGE		= 6
+PRIVATE			= 7
+
+
+class NTP(pypacker.Packet):
+	__hdr__ = (
+		("flags", "B", 0x1C),		# li | v | mode
+		("stratum", "B", 0x2),
+		("interval", "B", 0x4),
+		("precision", "B", 0xE9),
+		("delay", "I", 0),
+		("dispersion", "I", 0),
+		("id", "4s", b"\x00\x01\x02\x03"),
+		# timestamps: [seconds since 1.1.1900 | fraction of seconds]
+		("update_time", "8s", b"\x00" * 8),
+		("originate_time", "8s", b"" * 8),
+		("receive_time", "8s", b"" * 8),
+		("transmit_time", "8s", b"" * 8)
+	)
+
+	# li  v     mode [xx][xx x][xxx]
+	def __get_v(self):
+		return (self.flags >> 3) & 0x7
+
+	def __set_v(self, value):
+		self.flags = (self.flags & ~0x38) | ((value & 0x7) << 3)
+	v = property(__get_v, __set_v)
+
+	def __get_li(self):
+		return (self.flags >> 6) & 0x3
+
+	def __set_li(self, value):
+		self.flags = (self.flags & ~0xC0) | ((value & 0x3) << 6)
+	li = property(__get_li, __set_li)
+
+	def __get_mode(self):
+		return self.flags & 0x7
+
+	def __set_mode(self, value):
+		self.flags = (self.flags & ~0x7) | (value & 0x7)
+
+	mode = property(__get_mode, __set_mode)
+
+####################################################################
+#
+#
+#           DSHELL M THROUGH N SCRIPTS END
+#
+###################################################################
+
+
+####################################################################
+#
+#
+#           DSHELL O THROUGH P SCRIPTS START
+#
+###################################################################
+
+"""Open Shortest Path First."""
+
+from pypacker import pypacker, checksum
+from pypacker.pypacker import FIELD_FLAG_AUTOUPDATE
+
+AUTH_NONE = 0
+AUTH_PASSWORD = 1
+AUTH_CRYPTO = 2
+
+
+class OSPF(pypacker.Packet):
+	__hdr__ = (
+		("v", "B", 0),
+		("type", "B", 0),
+		("len", "H", 0),
+		("router", "I", 0),
+		("area", "I", 0),
+		("sum", "H", 0, FIELD_FLAG_AUTOUPDATE),  # _sum = sum
+		("atype", "H", 0),
+		("auth", "8s", b"")
+	)
+
+	def _update_fields(self):
+		if self.sum_au_active and self._changed():
+			self.sum = 0
+			self.sum = checksum.in_cksum(pypacker.Packet.bin(self))
+
+"""
+Generic Dshell output class(es)
+
+Contains the base-level Output class that other modules inherit from.
+"""
+
+import logging
+import os
+import re
+import sys
+from collections import defaultdict
+from datetime import datetime
+import warnings
+
+
+logger = logging.getLogger(__name__)
+
+
+class Output:
+    """
+    Base-level output class
+
+    Arguments:
+        format : 'format string' to override default formatstring for output class
+        timeformat : 'format string' for datetime representation
+        delimiter : set a delimiter for CSV or similar output
+        nobuffer : true/false to run flush() after every relevant write
+        noclobber : set to true to avoid overwriting existing files
+        fh : existing open file handle
+        file : filename to write to, assuming fh is not defined
+        mode : mode to open file, assuming fh is not defined (default 'w')
+        cbf : activate color blind friendly mode, colorout and htmlout output
+              modules use yellow/gold in place of red and different shades of
+              green/yellow/blue are used to help better differentiate between them
+    """
+    _DEFAULT_FORMAT = "%(data)s\n"
+    _DEFAULT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+    _DEFAULT_DELIM = ','
+    _DESCRIPTION = "Base output class"
+
+    def __init__(
+            self, file=None, fh=None, mode='w', format=None, timeformat=None, delimiter=None, nobuffer=False,
+            noclobber=False, extra=None, cbf=False, **unused_kwargs
+    ):
+        self.format_fields = []
+        self.timeformat = timeformat or self._DEFAULT_TIME_FORMAT
+        self.delimiter = delimiter or self._DEFAULT_DELIM
+        self.nobuffer = nobuffer
+        self.noclobber = noclobber
+        self.extra = extra
+        self.mode = mode
+        self.cbf = cbf
+
+        # Must define attributes even if they are setup in different function.
+        self.format_fields = None
+        self.format = None
+        self.set_format(format or self._DEFAULT_FORMAT)
+
+        # Set the filehandle for any output
+        if fh:
+            self.fh = fh
+            return
+
+        f = file
+        if f:
+            if self.noclobber:
+                f = self._increment_filename(f)
+            self.fh = open(f, self.mode)
+        else:
+            self.fh = sys.stdout
+
+    def reset_fh(self, filename=None, fh=None, mode=None):
+        """
+        Alter the module's open file handle without changing any of the other
+        settings. Must supply at least a filename or a filehandle (fh).
+        reset_fh(filename=None, fh=None, mode=None)
+        """
+        if fh:
+            self.fh = fh
+        elif filename:
+            if self.noclobber:
+                filename = self._increment_filename(filename)
+            if mode:
+                self.mode = mode
+                self.fh = open(filename, mode)
+            else:
+                self.fh = open(filename, self.mode)
+
+    def set_oargs(self, format=None, noclobber=None, delimiter=None, timeformat=None, hex=None, **unused_kwargs):
+        """
+        Process the standard oargs from the command line.
+        """
+        if delimiter:
+            if delimiter == "tab":
+                self.delimiter = '\t'
+            else:
+                self.delimiter = delimiter
+        if timeformat:
+            self.timeformat = timeformat
+        if noclobber:
+            self.noclobber = noclobber
+        if hex:
+            self.hexmode = hex
+        if format:
+            self.set_format(format)
+
+    def set_format(self, fmt):
+        """Set the output format to a new format string"""
+        # Use a regular expression to identify all fields that the format will
+        # populate, based on limited printf-style formatting.
+        # https://docs.python.org/3/library/stdtypes.html#old-string-formatting
+        regexmatch = "%\((?P<field>.*?)\)[diouxXeEfFgGcrs]"
+        self.format_fields = re.findall(regexmatch, fmt)
+        self.format = fmt
+
+    def _increment_filename(self, filename):
+        """
+        Used with the noclobber argument.
+        Creates a distinct filename by appending a sequence number.
+        """
+        try:
+            while os.stat(filename):
+                p = filename.rsplit('-', 1)
+                try:
+                    p, n = p[0], int(p[1])
+                except ValueError:
+                    n = 0
+                filename = '-'.join(p + ['%04d' % (int(n) + 1)])
+        except OSError:
+            pass  # file not found
+        return filename
+
+    def setup(self):
+        """
+        Perform any additional setup outside of the standard __init__.
+        For example, printing header data to the outfile.
+        """
+        pass
+
+    def close(self):
+        """
+        Close output file, assuming it's not stdout
+        """
+        if self.fh not in (sys.stdout, sys.stdout.buffer):
+            self.fh.close()
+
+    # NOTE: Output modules no longer handles logging. Logging should be done by creating a logger
+    # at the top of each of the modules.
+    # If we want to change the destination of the log messages we can create a log handler.
+    def log(self, msg, level=logging.INFO, *args, **kwargs):
+        """
+        Write a message to the log
+        Passes all args and kwargs thru to logging, except for 'level'
+        """
+        warnings.warn("Please create and use a logger using the logging module instead", DeprecationWarning)
+        logger.log(level, msg, *args, **kwargs)
+
+    def convert(self, *args, **kwargs):
+        """
+        Attempts to convert the args/kwargs into the format defined in
+        self.format and self.timeformat
+        """
+        # Have the keyword arguments default to empty strings, in the event
+        # of missing keys for string formatting
+        outdict = defaultdict(str, **kwargs)
+        outformat = self.format
+        extras = []
+
+        # Convert raw timestamps into a datetime object
+        if 'ts' in outdict:
+            try:
+                outdict['ts'] = datetime.fromtimestamp(float(outdict['ts']))
+                outdict['ts'] = outdict['ts'].strftime(self.timeformat)
+            except TypeError:
+                pass
+            except KeyError:
+                pass
+            except ValueError:
+                pass
+
+        if "starttime" in outdict and isinstance(outdict["starttime"], datetime):
+            outdict['starttime'] = outdict['starttime'].strftime(self.timeformat)
+        if "endtime" in outdict and isinstance(outdict["endtime"], datetime):
+            outdict['endtime'] = outdict['endtime'].strftime(self.timeformat)
+        if 'dt' in outdict and isinstance(outdict["dt"], datetime):
+            outdict['dt'] = outdict['dt'].strftime(self.timeformat)
+
+        # Create directional arrows
+        if 'dir_arrow' not in outdict:
+            if outdict.get('direction') == 'cs':
+                outdict['dir_arrow'] = '->'
+            elif outdict.get('direction') == 'sc':
+                outdict['dir_arrow'] = '<-'
+            else:
+                outdict['dir_arrow'] = '--'
+
+        # Convert Nones into empty strings.
+        # If --extra flag used, generate string representing otherwise hidden
+        # fields.
+        for key, val in sorted(outdict.items()):
+            if val is None:
+                val = ''
+                outdict[key] = val
+            if self.extra:
+                if key not in self.format_fields:
+                    extras.append("%s=%s" % (key, val))
+
+        # Dump the args into a 'data' field
+        outdict['data'] = self.delimiter.join(map(str, args))
+
+        # Create an optional 'extra' field
+        if self.extra:
+            if 'extra' not in self.format_fields:
+                outformat = outformat[:-1] + " [ %(extra)s ]\n"
+            outdict['extra'] = ', '.join(extras)
+
+        # Convert the output dictionary into a string that is dumped to the
+        # output location.
+        output = outformat % outdict
+        return output
+
+    def write(self, *args, **kwargs):
+        """
+        Primary output function. Should be overwritten by subclasses.
+        """
+        line = self.convert(*args, **kwargs)
+        try:
+            self.fh.write(line)
+            if self.nobuffer:
+                self.fh.flush()
+        except BrokenPipeError:
+            pass
+
+    def alert(self, *args, **kwargs):
+        """
+        DEPRECATED
+        Use the write function of the AlertOutput class
+        """
+        warnings.warn("Use the write function of the AlertOutput class", DeprecationWarning)
+        self.write(*args, **kwargs)
+
+    def dump(self, *args, **kwargs):
+        """
+        DEPRECATED
+        Use the write function of the PCAPOutput class
+        """
+        warnings.warn("Use the write function of the PCAPOutput class", DeprecationWarning)
+        self.write(*args, **kwargs)
+
+class QueueOutputWrapper(object):
+    """
+    Wraps an instance of any other Output-like object to make its
+    write function more thread safe.
+    """
+"""
+Primaly refer:
+	http://www.winpcap.org/ntar/draft/PCAP-DumpFileFormat.html
+
+TODO: Writer class implementation.
+TODO: Options getter/setter implementation.
+TODO: Investigate the implementation to support multi interface.
+
+Limitation:
+	Because the generally considered to only use wireshark,	support header
+	referenced to http://wiki.wireshark.org/Development/PcapNg
+
+	Mostly the following limitations
+		* Only a single section
+		Support:
+			+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+			| SHB v1.0  |         Data          |
+			+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+		Not support:
+			|<-   1st Section   ->|<-   2nd Section   ->| ... |
+			+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+			| SHB v1.0  |  Data   | SHB v1.1  |  Data   | ... |
+			+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+	Wireshark wiki written as "Capture file will have the following
+	pcap-ng blocks: SHB, IDB, IDB, IDB, EPB, EPB, ..., ISB, ISB, ISB.".
+		* SHB(Section Header Block)
+		* IDB(Interface Description Block)
+		* EPB(Enhanced Packet Block) <-- this is DUMP PACKET
+		* ISB(Interface Statistics Block)
+	Thus, created by assuming the following figure of block format:
+			+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+			| SHB | IDB | IDB | EPB | EPB | ... | EPB | ISB | ISB |
+			+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+	( 'A`)< Only file reading...
+
+"""
+import struct
+
+from pypacker import pypacker
+
+# avoid references
+unpack = struct.unpack
+
+PCAPNG_IDB = 0x00000001		# Interface Description Block
+# PCAPNG_PB  = 0x00000002		# (obsolated) Packet Block
+PCAPNG_SPB = 0x00000003			# Simple Packet Block
+# PCAPNG_NRB = 0x00000004		# Name Resolution Block
+PCAPNG_ISB = 0x00000005			# Interface Statistics Block
+PCAPNG_EPB = 0x00000006			# Enhanced Packet Block
+PCAPNG_SHB = 0x0A0D0D0A			# Section Header Block
+
+PCAPNG_VERSION_MAJOR = 1
+PCAPNG_VERSION_MINOR = 0
+
+BE_MAGIC = 0x1A2B3C4D
+LE_MAGIC = 0x4D3C2B1A
+
+OPT_ENDOFOPT = 0
+OPT_COMMENT = 1
+OPT_IDB_IF_NAME = 2
+OPT_IDB_IF_DESC = 3
+OPT_IDB_IF_V4ADDR = 4
+OPT_IDB_IF_V6ADDR = 5
+OPT_IDB_IF_MAC = 6
+OPT_IDB_IF_EUI = 7
+OPT_IDB_IF_SPEED = 8
+OPT_IDB_IF_TSRESOL = 9
+OPT_IDB_IF_TZONE = 10
+OPT_IDB_IF_FILTER = 11
+OPT_IDB_IF_OS = 12
+OPT_IDB_IF_FCSLEN = 13
+OPT_IDB_IF_TSOFFSET = 14
+OPT_ISB_STARTTIME = 2
+OPT_ISB_ENDTIME = 3
+OPT_ISB_IFRECV = 4
+OPT_ISB_IFDROP = 5
+OPT_ISB_FILTERACCEPT = 6
+OPT_ISB_OSDROP = 7
+OPT_ISB_USRDELIV = 8
+OPT_SHB_HARDWARE = 2
+OPT_SHB_OS = 3
+OPT_SHB_USERAPPL = 4
+
+IDB_OPTIONS = {
+	1: "opt_comment",
+	2: "if_name",
+	3: "if_description",
+	4: "if_IPv4addr",
+	5: "if_IPv6addr",
+	6: "if_MACaddr",
+	7: "if_EUIaddr",
+	8: "if_speed",
+	9: "if_tsresol",
+	10: "if_tzone",
+	11: "if_filter",
+	12: "if_os",
+	13: "if_fcslen",
+	14: "if_tsoffset",
+}
+
+ISB_OPTIONS = {
+	1: "opt_comment",
+	2: "isb_starttime",
+	3: "isb_endtime",
+	4: "isb_ifrecv",
+	5: "isb_ifdrop",
+	6: "isb_filteraccept",
+	7: "isb_osdrop",
+	8: "isb_usrdeliv",
+}
+
+SHB_OPTIONS = {
+	1: "opt_comment",
+	2: "shb_hardware",
+	3: "shb_os",
+	4: "shb_userappl",
+}
+
+
+def _32bit_alignment(offset, length):
+	return (offset + length + 3) & 0xFFFC
+
+
+class OPT(pypacker.Packet):
+	"""General option format"""
+	__hdr__ = (
+		("code", "H", 0),
+		("length", "H", 0),
+	)
+
+
+class SHB(pypacker.Packet):
+	"""Section Header Block (mandatory)"""
+	__hdr__ = (
+		("type", "I", PCAPNG_SHB),
+		("block_length", "I", 0),
+		("magic", "I", BE_MAGIC),
+		("v_major", "H", PCAPNG_VERSION_MAJOR),
+		("v_minor", "H", PCAPNG_VERSION_MINOR),
+		("section_length", "Q", 0),
+	)
+
+	class OPT(OPT):
+		pass
+
+
+class SHBLe(SHB):
+	__byte_order__ = "<"
+
+	class OPT(SHB.OPT):
+		__byte_order__ = "<"
+
+
+class IDB(pypacker.Packet):
+	"""Interface Description Block (mandatory)"""
+	__hdr__ = (
+		("type", "I", PCAPNG_IDB),
+		("block_length", "I", 0),
+		("linktype", "H", 0),
+		("reserved", "H", 0),
+		("snaplen", "I", 0),
+	)
+
+	class OPT(OPT):
+		pass
+
+
+class IDBLe(IDB):
+	__byte_order__ = "<"
+
+	class OPT(IDB.OPT):
+		__byte_order__ = "<"
+
+
+class EPB(pypacker.Packet):
+	"""Enhanced Packet Block (optional)"""
+	__hdr__ = (
+		("type", "I", PCAPNG_EPB),
+		("block_length", "I", 32),
+		("interface_id", "I", 0),
+		("ts_high", "I", 0),
+		("ts_low", "I", 0),
+		("cap_len", "I", 0),
+		("len", "I", 0),
+	)
+
+	class OPT(OPT):
+		pass
+
+
+class EPBLe(EPB):
+	__byte_order__ = "<"
+
+	class OPT(EPB.OPT):
+		__byte_order__ = "<"
+
+
+class SPB(pypacker.Packet):
+	"""Simple Packet Block (optional)"""
+	__hdr__ = (
+		("type", "I", PCAPNG_SPB),
+		("block_length", "I", 16),
+		("len", "I", 0),
+	)
+
+
+class SPBLe(SPB):
+	__byte_order__ = "<"
+
+
+class ISB(pypacker.Packet):
+	"""Interface Statistics Block (optional)"""
+	__hdr__ = (
+		("type", "I", PCAPNG_ISB),
+		("block_length", "I", 0),
+		("interface_id", "I", 1),
+		("ts_high", "I", 0),
+		("ts_low", "I", 0),
+	)
+
+	class OPT(OPT):
+		pass
+
+
+class ISBLe(ISB):
+	__byte_order__ = "<"
+
+	class OPT(ISB.OPT):
+		__byte_order__ = "<"
+
+
+class Writer():
+	def __init__(self):
+		pass
+
+
+class Reader():
+	def __init__(self,
+		fileobj=None,
+		filename=None):
+
+		self.idbs = []
+		self.isbs = []
+		self.__block_order__ = ""
+		self._IDB = IDB # pylint: disable=invalid-name
+		self._EPB = EPB # pylint: disable=invalid-name
+		self._ISB = ISB # pylint: disable=invalid-name
+		self._SHB = SHB # pylint: disable=invalid-name
+
+		# handle source modes
+		if fileobj is not None:
+			self.__fh = fileobj
+		elif filename is not None:
+			self.__fh = open(filename, "rb") # pylint: disable=consider-using-with
+		else:
+			raise Exception("No fileobject and no filename given..nothing to read!!!")
+
+		# How to parse:
+		#
+		# 	|--> Parse1       |--> iter               | Parse2 <--|
+		# 	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+		# 	| SHB | IDB | IDB | EPB | EPB | ... | EPB | ISB | ISB |
+		# 	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+		#
+		# 	1. Parse from head and stop at the EPB pointer.
+		# 	2. Parse from tail and stop at the EPB pointer
+		# 		or not supported header.
+
+		# Parse1
+		while 1:
+			buf = self.__fh.read(8)
+			block_type, block_length = unpack(self.__block_order__ + "2I", buf)
+			if block_type == PCAPNG_SHB:
+				buf = buf + self.__fh.read(block_length - len(buf))
+				self.shb = self._SHB(buf)
+				# Endian is decided magic in SHB.
+				if self.shb.magic == LE_MAGIC:
+					self.__to_le()
+					self.shb = self._SHB(buf)
+				self.shb.opts = self.__unpack_opt(buf, self._SHB)
+
+			elif block_type == PCAPNG_IDB:
+				buf = buf + self.__fh.read(block_length - len(buf))
+				_idb = self._IDB(buf)
+				_idb.opts = self.__unpack_opt(buf, self._IDB)
+				self.idbs.append(_idb)
+
+			elif block_type == PCAPNG_EPB:
+				self.__iter_pos = self.__fh.tell() - 8
+				self.__next__ = self._next_bytes_conversion
+				# TODO: Support nanosecond
+				self.__resolution_factor = 1000000.0
+				break
+
+			else:
+				break
+
+		# Parse2
+		# 1. Read Block Total Length from tail.
+		# 2. Seek reverse the Block Total Length.
+		# 3. Same Parse1.
+		#
+		# 0                   1                   2                   3
+		# 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+		# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ <---2
+		# |                          Block Type                           | 3
+		# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+		# |                      Block Total Length                       | V
+		# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+		# /                          Block Body                           /
+		# /          /* variable length, aligned to 32 bits */            /
+		# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+		# |                      Block Total Length                       |
+		# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ <---1
+		tail_offset = 0
+		while 1:
+			self.__fh.seek(-1 * (4 + tail_offset), 2)
+			block_length = unpack(self.__block_order__ + "I", self.__fh.read(4))[0]
+			self.__fh.seek(-1 * block_length, 1)
+			buf = self.__fh.read(8)
+			block_type, block_length = unpack(self.__block_order__ + "2I", buf)
+			tail_offset += block_length
+
+			if block_type == PCAPNG_ISB:
+				buf = buf + self.__fh.read(block_length - len(buf))
+				_isb = self._ISB(buf)
+				_isb.opts = self.__unpack_opt(buf, self._ISB)
+				self.isbs.append(_isb)
+
+			else:
+				break
+
+	def __to_le(self):
+		self.__block_order__ = "<"
+		self._IDB = IDBLe
+		self._EPB = EPBLe
+		self._ISB = ISBLe
+		self._SHB = SHBLe
+
+	def __unpack_opt(self, buf, block):
+		offset = block._hdr_fmt.size
+		opts = []
+		while 1:
+			opt_hdr = buf[offset:offset + OPT._hdr_fmt.size]
+			if not opt_hdr:
+				break
+			_, length = unpack(self.__block_order__ + "2H", opt_hdr)
+			opt = block.OPT(buf[offset:offset + OPT._hdr_fmt.size + length])
+			if opt.code == OPT_ENDOFOPT:
+				break
+			opts.append(opt)
+			offset = _32bit_alignment(offset + OPT._hdr_fmt.size, length)
+		return opts
+
+	def _next_bytes_conversion(self):
+		"""
+		Standard __next__ implementation. Needs to be a sepearte method to be called by producer.
+
+		return -- (timestamp_microseconds, Enhanced_Packet_Block) for pcap-reader.
+			Access DUMP DATA: Enhanced_Packet_Block.data
+		"""
+		buf = self.__fh.read(8)
+		if not buf:
+			raise StopIteration
+
+		block_type, block_length = unpack(self.__block_order__ + "2I", buf)
+		if not block_type == PCAPNG_EPB:
+			raise StopIteration
+
+		buf = buf + self.__fh.read(block_length - len(buf))
+		_epb = self._EPB(buf)
+		_epb.opts = self.__unpack_opt(buf, self._EPB)
+
+		return (((_epb.ts_high << 32) + _epb.ts_low) / self.__resolution_factor, _epb)
+
+	def __iter__(self):
+		"""
+		return -- (timestamp, Enhanced Packet Block) for pcap-reader depending on configuration.
+		"""
+		self.__fh.seek(self.__iter_pos)
+		while True:
+			try:
+				yield self.__next__()
+			except StopIteration:
+				break
+
+    def __init__(self, oobject, oqueue):
+        self.__oobject = oobject
+        self.__owrite = oobject.write
+        self.queue = oqueue
+        self.id = str(self.__oobject)
+
+    def true_write(self, *args, **kwargs):
+        "Calls the wrapped class's write function. Called from decode.py."
+        self.__owrite(*args, **kwargs)
+
+    def write(self, *args, **kwargs):
+        """
+        Adds a message to the queue indicating that this wrapper is ready to
+        run its write function
+        """
+        self.queue.put((self.id, args, kwargs))
+
+
+###############################################################################
+
+# The "obj" variable is used in decode.py as a standard name for each output
+# module's primary class. It technically imports this variable and uses it to
+# construct an instance.
+obj = Output
+
+
+"""
+This output module generates pcap output when given very specific arguments.
+"""
+
+from dshell.output.output import Output
+import struct
+import sys
+
+# TODO get this module to work with ConnectionPlugins
+
+class PCAPOutput(Output):
+    "Writes data to a pcap file."
+    _DESCRIPTION = "Writes data to a pcap file (does not work with connection-based plugins)"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, mode='wb', **kwargs)
+        if self.fh == sys.stdout:
+            # Switch to a stdout that can handle byte output
+            self.fh = sys.stdout.buffer
+        # Since we have to wait until the link-layer type is set, we wait
+        # until the first write() operation before writing the pcap header
+        self.header_written = False
+
+    def write(self, *args, **kwargs):
+        """
+        Write a packet to the pcap file.
+
+        Arguments:
+            pktlen  : raw packet length
+            rawpkt  : raw packet data string
+            ts      : timestamp
+            link_layer_type :   link-layer type (optional) (default: 1)
+                                (e.g. 1 for Ethernet, 105 for 802.11, etc.)
+        """
+        # The first time write() is called, the pcap header is written.
+        # This is to allow the plugin enough time to figure out what the
+        # link-layer type is for the data.
+        if not self.header_written:
+            link_layer_type = kwargs.get('link_layer_type', 1)
+            # write the header:
+            # magic_number, version_major, version_minor, thiszone, sigfigs,
+            # snaplen, link-layer type
+            self.fh.write(
+                struct.pack('IHHIIII', 0xa1b2c3d4, 2, 4, 0, 0, 65535, link_layer_type))
+            self.header_written = True
+
+        # Attempt to fetch the required fields
+        pktlen = kwargs.get('pktlen', None)
+        rawpkt = kwargs.get('rawpkt', None)
+        ts = kwargs.get('ts', None)
+        if pktlen is None or rawpkt is None or ts is None:
+            raise TypeError("PCAPOutput.write() requires at least these arguments to write packet data: pktlen, rawpkt, and ts.\n\tIt is possible this plugin is not configured to handle pcap output.")
+
+        self.fh.write(
+            struct.pack('II', int(ts), int((ts - int(ts)) * 1000000)))
+        self.fh.write(struct.pack('II', len(rawpkt), pktlen))
+        self.fh.write(rawpkt)
+
+    def close(self):
+        if self.fh == sys.stdout.buffer:
+            self.fh = sys.stdout
+        super().close()
+
+obj = PCAPOutput
+
+"""
+Generates pcap output
+
+Can be used alone or chained at the end of plugins for a kind of filter.
+
+Use --pcapwriter_outfile to separate its output from that of other plugins.
+
+Example uses include:
+ - merging multiple pcap files into one
+   (decode -d pcapwriter ~/pcap/* >merged.pcap)
+ - saving relevant traffic by chaining with another plugin
+   (decode -d track+pcapwriter --track_source=192.168.1.1 --pcapwriter_outfile=merged.pcap ~/pcap/*)
+ - getting pcap output from plugins that can't use pcapout
+   (decode -d web+pcapwriter ~/pcap/*)
+"""
+
+import struct
+
+import dshell.core
+
+class DshellPlugin(dshell.core.PacketPlugin):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            name="pcap writer",
+            description="Used to generate pcap output for plugins that can't use -o pcapout",
+            longdescription="""Generates pcap output
+
+Can be used alone or chained at the end of plugins for a kind of filter.
+
+Use --pcapwriter_outfile to separate its output from that of other plugins.
+
+Example uses include:
+ - merging multiple pcap files into one (decode -d pcapwriter ~/pcap/* --pcapwriter_outfile=merged.pcap)
+ - saving relevant traffic by chaining with another plugin (decode -d track+pcapwriter --track_source=192.168.1.1 --pcapwriter_outfile=merged.pcap ~/pcap/*)
+ - getting pcap output from plugins that can't use pcapout (decode -d web+pcapwriter ~/pcap/*)
+""",
+            author="dev195",
+            optiondict={
+                "outfile": {
+                    "type": str,
+                    "help": "Write to FILE instead of stdout",
+                    "metavar": "FILE",
+                }
+            }
+        )
+        self.outfile = None  # Filled in with constructor
+        self.pcap_fh = None
+
+    def prefile(self, infile=None):
+        # Default to setting pcap output filename based on first input file.
+        if not self.outfile:
+            self.outfile = (infile or self.current_pcap_file) + ".pcap"
+
+    def packet_handler(self, packet: dshell.Packet):
+        # If we don't have a pcap file handle, this is our first packet.
+        # Create the output pcap file handle.
+        # NOTE: We want to create the file on the first packet instead of premodule so we
+        #   have a chance to use the input file as part of our output filename.
+        if not self.pcap_fh:
+            self.pcap_fh = open(self.outfile, mode="wb")
+            link_layer_type = self.link_layer_type or 1
+            # write the header:
+            # magic_number, version_major, version_minor, thiszone, sigfigs,
+            # snaplen, link-layer type
+            self.pcap_fh.write(
+                struct.pack('IHHIIII', 0xa1b2c3d4, 2, 4, 0, 0, 65535, link_layer_type))
+
+        ts = packet.ts
+        rawpkt = packet.rawpkt
+        pktlen = packet.pktlen
+        self.pcap_fh.write(struct.pack('II', int(ts), int((ts - int(ts)) * 1000000)))
+        self.pcap_fh.write(struct.pack('II', len(rawpkt), pktlen))
+        self.pcap_fh.write(rawpkt)
+
+        return packet
+
+    def postmodule(self):
+        if self.pcap_fh:
+            self.pcap_fh.close()
+
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+"""Protocol Independent Multicast."""
+
+from pypacker import pypacker, checksum
+from pypacker.pypacker import FIELD_FLAG_AUTOUPDATE
+
+
+class PIM(pypacker.Packet):
+	__hdr__ = (
+		("v_type", "B", 0x20),
+		("rsvd", "B", 0),
+		("sum", "H", 0, FIELD_FLAG_AUTOUPDATE)  # _sum = sum
+	)
+
+	def __get_v(self):
+		return self.v_type >> 4
+
+	def __set_v(self, v):
+		self.v_type = (v << 4) | (self.v_type & 0xF)
+	v = property(__get_v, __set_v)
+
+	def __get_type(self):
+		return self.v_type & 0xF
+
+	def __set_type(self, pimtype):
+		self.v_type = (self.v_type & 0xF0) | pimtype
+	type = property(__get_type, __set_type)
+
+	def _update_fields(self):
+		if self.sum_au_active and self._changed():
+			self.sum = 0
+			self.sum = checksum.in_cksum(pypacker.Packet.bin(self))
+"""Portmap / rpcbind."""
+
+from pypacker import pypacker
+
+PMAP_PROG = 100000
+PMAP_PROCDUMP = 4
+PMAP_VERS = 2
+
+
+class Pmap(pypacker.Packet):
+	__hdr__ = (
+		("prog", "I", 0),
+		("vers", "I", 0),
+		("prot", "I", 0),
+		("port", "I", 0),
+	)
+
+"""
+Packet read and write routines for pcap format.
+See http://wiki.wireshark.org/Development/LibpcapFileFormat
+"""
+import logging
+import types
+
+from pypacker import pypacker
+from pypacker.structcbs import pack_H, unpack_H_le, pack_I, unpack_I_le
+from pypacker.structcbs import pack_IIII, unpack_IIII, pack_IIII_le, unpack_IIII_le
+from pypacker.layer12 import ethernet, linuxcc, ieee80211, radiotap, btle, can
+
+logger = logging.getLogger("pypacker")
+
+"""
+PCAP/TCPDump related
+"""
+# PCAP file header
+
+# File magic numbers
+# pcap using microseconds resolution
+TCPDUMP_MAGIC_MICRO	        = 0xA1B2C3D4
+TCPDUMP_MAGIC_MICRO_SWAPPED	= 0xD4C3B2A1
+# pcap using nanoseconds resolution
+TCPDUMP_MAGIC_NANO		= 0xA1B23C4D
+TCPDUMP_MAGIC_NANO_SWAPPED	= 0x4D3CB2A1
+
+PCAP_VERSION_MAJOR		= 2
+PCAP_VERSION_MINOR		= 4
+
+DLT_NULL				= 0
+DLT_EN10MB				= 1
+DLT_EN3MB				= 2
+DLT_AX25				= 3
+DLT_PRONET				= 4
+DLT_CHAOS				= 5
+DLT_IEEE802				= 6
+DLT_ARCNET				= 7
+DLT_SLIP				= 8
+DLT_PPP					= 9
+DLT_FDDI				= 10
+DLT_PFSYNC				= 18
+DLT_IEEE802_11				= 105
+DLT_LINUX_SLL				= 113
+DLT_PFLOG				= 117
+DLT_IEEE802_11_RADIO			= 127
+DLT_CAN_SOCKETCAN		        = 227
+DLT_LINKTYPE_BLUETOOTH_LE_LL		= 251
+LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR	= 256
+
+PCAPTYPE_CLASS = {
+	DLT_LINUX_SLL: linuxcc.LinuxCC,
+	DLT_EN10MB: ethernet.Ethernet,
+	DLT_CAN_SOCKETCAN: can.CAN,
+	DLT_IEEE802_11: ieee80211.IEEE80211,
+	DLT_IEEE802_11_RADIO: radiotap.Radiotap,
+	LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR: btle.BTLEHdr
+}
+
+
+class PcapFileHdr(pypacker.Packet):
+	"""pcap file header."""
+	# header length = 24
+	__hdr__ = (
+		("magic", "I", TCPDUMP_MAGIC_NANO),
+		("v_major", "H", PCAP_VERSION_MAJOR),
+		("v_minor", "H", PCAP_VERSION_MINOR),
+		("thiszone", "I", 0),
+		("sigfigs", "I", 0),
+		("snaplen", "I", 1500),
+		("linktype", "I", 1),
+	)
+
+
+class PcapPktHdr(pypacker.Packet):
+	"""pcap packet header."""
+	# header length: 16
+	__hdr__ = (
+		("tv_sec", "I", 0),
+		# this can be either microseconds or nanoseconds: check magic number
+		("tv_usec", "I", 0),
+		("caplen", "I", 0),
+		("len", "I", 0),
+	)
+
+
+# Pcap magic to config:
+# magic : (ts_resolution, unpack_ts, pack_ts)
+MAGIC__PCAPFILECONFIG = {
+	TCPDUMP_MAGIC_MICRO: (1000, unpack_IIII, pack_IIII),
+	TCPDUMP_MAGIC_NANO: (1, unpack_IIII, pack_IIII),
+	TCPDUMP_MAGIC_MICRO_SWAPPED: (1000, unpack_IIII_le, pack_IIII_le),
+	TCPDUMP_MAGIC_NANO_SWAPPED: (1, unpack_IIII_le, pack_IIII_le)
+}
+
+# PCAP callbacks
+
+
+def pcap_cb_init_write(self,
+	snaplen=1500,
+	linktype=DLT_EN10MB,
+	magic=TCPDUMP_MAGIC_NANO,
+	**initdata): # pylint: disable=unused-argument
+	# Nanoseconds
+	self._timestamp = 0
+
+	# A new pcap file is created
+	if self._fh.tell() == 0:
+		#logger.debug("Creating new pcap")
+		self._resolution_factor, _, self._callback_pack_meta = MAGIC__PCAPFILECONFIG[magic]
+		header = PcapFileHdr(magic=magic, snaplen=snaplen, linktype=linktype)
+
+		# BE -> LE
+		if magic in [TCPDUMP_MAGIC_MICRO_SWAPPED, TCPDUMP_MAGIC_NANO_SWAPPED]:
+			header.v_major = unpack_H_le(pack_H(header.v_major))[0]
+			header.v_minor = unpack_H_le(pack_H(header.v_minor))[0]
+			header.snaplen = unpack_I_le(pack_I(snaplen))[0]
+			header.linktype = unpack_I_le(pack_I(linktype))[0]
+
+		self._fh.write(header.bin())
+	# File already present, read config
+	else:
+		#logger.debug("File already present, reading config and appending to end")
+		self._fh.seek(0)
+		buf = self._fh.read(24)
+		magic = PcapFileHdr(buf).magic
+
+		if magic not in [TCPDUMP_MAGIC_MICRO, TCPDUMP_MAGIC_NANO, TCPDUMP_MAGIC_MICRO_SWAPPED, TCPDUMP_MAGIC_NANO_SWAPPED]:
+			raise Exception("Invalid magic: %X" % magic)
+
+		self._resolution_factor, callback_unpack_meta, self._callback_pack_meta = MAGIC__PCAPFILECONFIG[magic]
+		# Get last ts in pcap -> read until end
+		fhpos = 24
+		self._fh.seek(fhpos)
+		d = [0, 0, 0, 0]
+
+		while True:
+			buf = self._fh.read(16)
+			fhpos += 16
+
+			if not buf:
+				break
+
+			d = callback_unpack_meta(buf)
+			#logger.debug("s=%d, subsec=%d" % (d[0], d[1]))
+			fhpos += d[2]
+			self._fh.seek(fhpos)
+
+		self._timestamp = d[0] * 1000000000 + (d[1] * self._resolution_factor)
+		#logger.debug("Last ts: s=%d, subsec=%d, final=%d" % (d[0], d[1], self._timestamp))
+
+
+def pcap_cb_write(self, bts, **metadata):
+	# Check if "ts" was given when calling write(), otherwise assume 1 us has passed
+	# ts = given as ns
+	ts = metadata.get("ts", self._timestamp + 1000)
+	self._timestamp = ts
+	sec = int(ts // 1000000000)
+	# ns -> [ns | us]
+	subsec = int((ts - (sec * 1000000000)) / self._resolution_factor)
+
+	# logger.debug("packet time sec/subsec: %d/%d", sec, subsec)
+	n = len(bts)
+	self._fh.write(self._callback_pack_meta(sec, subsec, n, n))
+	self._fh.write(bts)
+
+
+def pcap_cb_init_read(self, **initdata): # pylint: disable=unused-argument
+	buf = self._fh.read(24)
+	# File header is skipped per default (needed for __next__)
+	self._fh.seek(24)
+	fhdr = PcapFileHdr(buf)
+
+	if fhdr.magic not in [TCPDUMP_MAGIC_MICRO, TCPDUMP_MAGIC_NANO, TCPDUMP_MAGIC_MICRO_SWAPPED,
+		TCPDUMP_MAGIC_NANO_SWAPPED]:
+		return False
+
+	is_le = fhdr.magic not in [TCPDUMP_MAGIC_MICRO, TCPDUMP_MAGIC_NANO]
+
+	#logger.debug("Pcap magic: %X, le: %s" % (fhdr.magic, is_le))
+	# Handle file types
+	# Note: we could use PcapPktHdr/PcapLEPktHdr to parse pre-packetdata but calling unpack directly
+	# greatly improves performance
+	self._resolution_factor, self._callback_unpack_meta, _ = MAGIC__PCAPFILECONFIG[fhdr.magic]
+	linktype = fhdr.linktype if not is_le else unpack_I_le(pack_I(fhdr.linktype))[0]
+	self._lowest_layer_new = PCAPTYPE_CLASS.get(linktype, None)
+	return True
+
+
+def pcap_cb_read(self):
+	buf = self._fh.read(16)
+
+	if not buf:
+		raise StopIteration
+
+	d = self._callback_unpack_meta(buf)
+	buf = self._fh.read(d[2])
+
+	# return as ns: sec->ns + [us*1000 | ns]
+	return d[0] * 1000000000 + (d[1] * self._resolution_factor), buf
+
+
+def pcap_cb_btstopkt(self, meta, bts): # pylint: disable=unused-argument
+	return self._lowest_layer_new(bts)
+
+
+FILETYPE_PCAP	= 0
+# TODO: add pcapng support:
+# - Interface name can be stored. Handy if capturing on >1 interfaces
+#FILETYPE_PCAPNG	= 1
+
+# type_id : [
+#	cb_init_write(obj, **initdata),
+#	cb_write(self, bytes, **metadata),
+#	cb_init_read(obj, **initdata),
+#	cb_read(self): metadata, bytes
+#	cb_btstopkt(self, metadata, bytes): pkt
+# ]
+FILEHANDLER = {
+	FILETYPE_PCAP: [
+		pcap_cb_init_write, pcap_cb_write, pcap_cb_init_read, pcap_cb_read, pcap_cb_btstopkt
+	],
+}
+
+
+class FileHandler():
+	def __init__(self, filename=None, fileobj=None, accessmode=None):
+		if filename is not None:
+			self._fh = open(filename, accessmode) # pylint: disable=unspecified-encoding,consider-using-with
+		elif fileobj is not None:
+			self._fh = fileobj
+		self._closed = False
+
+	def __enter__(self):
+		return self
+
+	def __exit__(self, objtype, value, traceback):
+		self.close()
+
+	def flush(self):
+		self._fh.flush()
+
+	def close(self):
+		self._closed = True
+		self._fh.close()
+
+
+class Writer(FileHandler):
+	"""
+	Simple pcap writer supporting pcap format.
+	"""
+	def __init__(self, filename=None, fileobj=None, filetype=FILETYPE_PCAP, append=False, **initdata):
+		accessmode = "a+b" if append else "wb"
+		super().__init__(filename=filename, fileobj=fileobj, accessmode=accessmode)
+
+		callbacks = FILEHANDLER[filetype]
+		callbacks[0](self, **initdata)
+		self.write = types.MethodType(callbacks[1], self)
+
+
+class Reader(FileHandler):
+	"""
+	Simple pcap file reader supporting pcap format.
+	"""
+	def __init__(self, filename=None, fileobj=None, filetype=FILETYPE_PCAP, **initdata):
+		super().__init__(filename=filename, fileobj=fileobj, accessmode="rb")
+
+		callbacks = FILEHANDLER[filetype]
+		ismatch = False
+
+		for pcaptype, callbacks in FILEHANDLER.items(): # pylint: disable=unused-variable
+			self._fh.seek(0)
+			# init callback
+			ismatch = callbacks[2](self, **initdata)
+
+			if ismatch:
+				#logger.debug("found handler for file: %x", pcaptype)
+				# Read callback
+				self.__next__ = types.MethodType(callbacks[3], self)
+				# Bytes-to-packet callback
+				self._btstopkt = types.MethodType(callbacks[4], self)
+				break
+		if not ismatch:
+			raise Exception("No matching handler found")
+
+	def read_packet(self, pktfilter=lambda pkt: True):
+		"""
+		pktfilter -- Filter as lambda function to match packets to be retrieved,
+			return True to accept a specific packet.
+		return -- (metadata, packet) if packet can be created from bytes
+			else (metadata, bytes). For pcap/tcpdump metadata is a nanoseconds timestamp
+		"""
+		while True:
+			# Until StopIteration
+			meta, bts = self.__next__() # pylint: disable=not-callable,unnecessary-dunder-call
+
+			try:
+				pkt = self._btstopkt(meta, bts) # pylint: disable=not-callable
+			except Exception as ex:
+				logger.warning("Could not create packets from bytes: %r", ex)
+				return meta, bts
+
+			if pktfilter(pkt):
+				return meta, pkt
+
+	def read_packet_iter(self, pktfilter=lambda pkt: True):
+		"""
+		pktfilter -- Filter as lambda function to match packets to be retrieved,
+			return True to accept a specific packet.
+		return -- iterator yielding (metadata, packet)
+		"""
+		if self._closed:
+			return
+
+		while True:
+			try:
+				yield self.read_packet(pktfilter=pktfilter)
+			except:
+				return
+
+	def __iter__(self):
+		"""
+		return -- (metadata, bytes)
+		"""
+		if self._closed:
+			return
+
+		while True:
+			try:
+				yield self.__next__() # pylint: disable=not-callable
+			except StopIteration:
+				break
+
+	def read(self):
+		"""
+		Get all packets as list.
+		return -- [(ts, bts), ...]
+		"""
+		return list(self)
+
+
+def merge_pcaps(pcap_filenames_in, pcap_filename_out, filter_accept=lambda bts: True, linktype=DLT_EN10MB):
+	"""
+	Merge multiple pcap files.
+	pcap_filenames_in -- List of pcap filenames to be merged
+	pcap_filename_out -- The final merged pcap file
+	filter -- A callback "lambda bts: [True|False]" for filtering packets. True = merge packet to output file.
+	linktype -- Linktype for pcap_filename_out
+	"""
+	fp_out = Writer(filename=pcap_filename_out, linktype=linktype)
+
+	for pcap_filename_in in pcap_filenames_in:
+		fp_in = Reader(filename=pcap_filename_in)
+		cnt = 1
+		try:
+			for _, bts in fp_in:
+				if filter_accept(bts):
+					fp_out.write(bts) # pylint: disable=not-callable
+				cnt += 1
+			fp_in.close()
+		except Exception as ex:
+			logger.warning("Terminated reading %s at packet %d", pcap_filename_in, cnt)
+			logger.exception(ex)
+	fp_out.close()
+
+"""Point-to-Point Protocol."""
+import logging
+
+from pypacker import pypacker, triggerlist
+from pypacker.structcbs import unpack_H
+
+# handler
+from pypacker.layer3 import ip, ip6
+
+
+logger = logging.getLogger("pypacker")
+
+# http://www.iana.org/assignments/ppp-numbers
+PPP_IP	= 0x21		# Internet Protocol
+PPP_IP6 = 0x57		# Internet Protocol v6
+
+# Protocol field compression
+PFC_BIT	= 0x01
+
+
+class PPP(pypacker.Packet):
+	__hdr__ = (
+		("p", None, triggerlist.TriggerList),
+	)
+
+	__handler__ = {
+		PPP_IP: ip.IP,
+		PPP_IP6: ip6.IP6
+	}
+
+	def _dissect(self, buf):
+		hlen = 1
+		ppp_type = buf[0]
+
+		if ppp_type & PFC_BIT == 0:
+			ppp_type = unpack_H(buf[:2])[0]
+			hlen = 2
+			self.p(buf[0:2], lambda tval: tval)
+		else:
+			self.p(buf[0:1], lambda tval: tval)
+
+		return hlen, ppp_type
+
+"""PPP-over-Ethernet."""
+from pypacker import pypacker
+
+# RFC 2516 codes
+PPPOE_PADI	= 0x09
+PPPOE_PADO	= 0x07
+PPPOE_PADR	= 0x19
+PPPOE_PADS	= 0x65
+PPPOE_PADT	= 0xA7
+PPPOE_SESSION	= 0x00
+
+
+class PPPoE(pypacker.Packet):
+	__hdr__ = (
+		("v_type", "B", 0x11),
+		("code", "B", 0),
+		("session", "H", 0),
+		("len", "H", 0)  # payload length
+	)
+
+	def __get_v(self):
+		return self.v_type >> 4
+
+	def __set_v(self, v):
+		self.v_type = (v << 4) | (self.v_type & 0xF)
+	v = property(__get_v, __set_v)
+
+	def __get_type(self):
+		return self.v_type & 0xF
+
+	def __set_type(self, t):
+		self.v_type = (self.v_type & 0xF0) | t
+	type = property(__get_type, __set_type)
+
+	def _dissect(self, buf):
+		code = buf[1]
+		if code == PPPOE_SESSION:
+			return 6, code
+
+		return 6
+
+"""
+Tries to find traffic that does not belong to the following protocols:
+TCP, UDP, or ICMP
+"""
+
+import dshell.core
+from dshell.output.alertout import AlertOutput
+
+class DshellPlugin(dshell.core.PacketPlugin):
+
+    def __init__(self):
+        super().__init__(
+            name="Uncommon Protocols",
+            description="Finds uncommon (i.e. not tcp, udp, or icmp) protocols in IP traffic",
+            bpf="(ip or ip6) and not tcp and not udp and not icmp and not icmp6",
+            author="bg",
+            output=AlertOutput(label=__name__),
+        )
+
+    def packet_handler(self, packet):
+        self.write("PROTOCOL: {} ({})".format(packet.protocol, packet.protocol_num), **packet.info(), dir_arrow="->")
+        return packet
+"""
+Simple socket wrapper for reading/writing on layer 2.
+For all other use cases standard python sockets
+should be used.
+"""
+import socket
+import ssl
+import logging
+
+from pypacker import pypacker
+from pypacker.layer12 import ethernet
+
+logger = logging.getLogger("pypacker")
+
+
+class SocketHndl():
+	"""
+	Simple socket handler for layer 2 reading/writing.
+	"""
+	ETH_P_ALL	= 0x0003
+	ETH_P_IPV4	= 0x0800
+
+	def __init__(self,
+		iface_name="lo",
+		timeout=3,
+		buffersize_recv=None,
+		buffersize_send=None):
+		"""
+		iface_name -- Bind to the given interface
+		timeout -- read timeout in seconds
+		buffersize_recv, buffersize_send -- amount of bytes used for receiving and sending
+		"""
+
+		self.iface_name = iface_name
+		self._socket = None
+		# man 7 raw -> Receiving of all IP protocols via IPPROTO_RAW
+		# is not possible using raw sockets.
+		# socket(AF_INET, SOCK_RAW, IPPROTO_RAW)
+
+		logger.info("creating socket, interface to bind on: %s", iface_name)
+		try:
+			self._socket = socket.socket(socket.AF_PACKET,
+				socket.SOCK_RAW,
+				socket.htons(SocketHndl.ETH_P_ALL))
+		except OSError as err:
+			logger.warning(err)
+			logger.warning("Reducing receive scope to IPv4-only")
+			self._socket = socket.socket(socket.AF_PACKET,
+				socket.SOCK_RAW,
+				socket.htons(SocketHndl.ETH_P_IPV4))
+
+		if iface_name is not None:
+			self._socket.bind((iface_name, SocketHndl.ETH_P_ALL))
+
+		self._socket.settimeout(timeout)
+
+		if buffersize_recv is not None:
+			self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, buffersize_recv)
+		if buffersize_send is not None:
+			self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, buffersize_send)
+
+	def send(self, bts):
+		"""
+		Send the given bytes to network.
+
+		bts -- the bytes to be sent
+		"""
+		self._socket.send(bts)
+
+	def recv(self, size=65536):
+		"""
+		return -- bytes received from network
+		"""
+		return self._socket.recv(size)
+
+	def __enter__(self):
+		return self
+
+	def __exit__(self, objtype, value, traceback):
+		self.close()
+
+	def __iter__(self):
+		"""
+		Call __next__() until StopIteration
+		"""
+		try:
+			while True:
+				yield self.__next__()
+		except StopIteration:
+			return
+
+	def __next__(self):
+		try:
+			return self.recv()
+		except socket.timeout:
+			raise StopIteration # pylint: disable=raise-missing-from
+
+	def recvp(self,
+		filter_match_recv=lambda _: True,
+		pkt_criteria=None,
+		lowest_layer=ethernet.Ethernet,
+		max_amount=1): # pylint: disable=raise-missing-from
+		"""
+		Receive packets from network. This does the same as calling recv() but using a receive
+		filter and received bytes will be converted to packets using class given by lowest_layer.
+		Raises socket.timeout on timeout
+
+		filter_match_recv -- filter as callback function to match packets to be retrieved.
+			Callback-structure: fct(packet), Return True to accept a specific packet.
+			Raise StopIteration to stop receiving packets, max_amount will match after all.
+		pkt_criteria -- Same as pkt[pkt_criteria]
+		lowest_layer -- Packet class to be used to create new packets
+		max_amount -- Maximum amount of packets to be fetched
+		return -- Packets received from network as list
+		"""
+		received = []
+
+		if pkt_criteria is not None:
+			while len(received) < max_amount:
+				bts = self.recv()
+				packet_recv = lowest_layer(bts)
+				layers = packet_recv[pkt_criteria]
+
+				try:
+					if layers[-1] is not None:
+						received.append(packet_recv)
+				except StopIteration:
+					break
+		else:
+			while len(received) < max_amount:
+				bts = self.recv()
+				packet_recv = lowest_layer(bts)
+				# logger.debug("got packet: %s" % packet_recv)
+				try:
+					if filter_match_recv(packet_recv):
+						received.append(packet_recv)
+				except StopIteration:
+					break
+				except:
+					# any other exception: ignore
+					pass
+
+		return received
+
+	def recvp_iter(self, filter_match_recv=lambda _: True, lowest_layer=ethernet.Ethernet):
+		"""
+		Same as recvp but using iterator returning one packet per cycle.
+		"""
+		while True:
+			try:
+				bts = self.recv()
+			except socket.timeout:
+				return
+
+			packet_recv = lowest_layer(bts)
+			# logger.debug("got packet: %s" % packet_recv)
+			try:
+				if filter_match_recv(packet_recv):
+					yield packet_recv
+			except StopIteration:
+				return
+			except:
+				continue
+
+	def sr(self, packet_send, max_packets_recv=1, pfilter=lambda _: True, lowest_layer=ethernet.Ethernet):
+		"""
+		Send a packet and receive answer packets. This will use information retrieved
+		from direction() to retrieve answer packets. This is not 100% reliable as
+		it primarily depends on source/destination data of layers like Ethernet, IP etc.
+		Raises socket.timeout on timeout.
+
+		packet_send -- pypacker packet to be sent
+		max_packets_recv -- max packets to be received
+		pfilter -- filter as lambda function to match packets to be retrieved,
+			return True to accept a specific packet.
+		lowest_layer -- packet class to be used to create new packets
+
+		return -- packets receives
+		"""
+
+		received = []
+		packet_send_clz = packet_send.__class__
+
+		self.send(packet_send.bin())
+
+		while len(received) < max_packets_recv:
+			bts = self.recv()
+			packet_recv = lowest_layer(bts)
+			# logger.debug("got packet: %s" % packet_recv)
+			if not pfilter(packet_recv):
+				# filter didn't match
+				continue
+
+			# start to compare on corresponding receive-layer
+			if packet_send.is_direction(packet_recv[packet_send_clz], pypacker.Packet.DIR_REV):
+				# logger.debug("direction matched: %s" % packet_recv)
+				received.append(packet_recv)
+
+		return received
+
+	def close(self):
+		try:
+			self._socket.close()
+		except:
+			pass
+
+
+def get_ssl_clientsocket( # pylint: disable=too-many-arguments
+	hostname,
+	port,
+	server_cert=None,
+	ssl_server_hostname_to_check=None,
+	verify_mode=ssl.CERT_NONE, timeout=5):
+	"""
+	server_cert -- PEM file containing server certificate
+	ssl_server_hostname_to_check -- Check hostname in context of TLS
+	verify_mode -- Verify server certificate, ssl.CERT_REQUIRED needs server_cert
+	return -- SSL wrapped TCP client socket
+	"""
+	context = ssl.create_default_context()
+
+	if server_cert is not None:
+		context.load_verify_locations(server_cert)
+
+	context.check_hostname = ssl_server_hostname_to_check is not None
+	context.verify_mode = verify_mode
+	socket_simple = socket.create_connection((hostname, port))
+	socket_ssl = context.wrap_socket(socket_simple, server_hostname=ssl_server_hostname_to_check)
+	socket_ssl.settimeout(timeout)
+	return socket_ssl
+
+
+def get_ssl_serversocket(file_certchain, file_privatekey, bindoptions, password_privkey=None):
+	"""
+	Create a SSL based server socket. Useage:
+	conn, addr = ssock.accept()
+	data = conn.recv()
+	conn.send(data)
+
+	Certificate/private key can be created via:
+	openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365
+
+	return -- SSL wrapped TCP server socket
+	"""
+	context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+	context.load_cert_chain(file_certchain, file_privatekey, password=password_privkey)
+
+	socket_simple = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+	socket_simple.bind(bindoptions)
+	socket_simple.listen(5)
+
+	return context.wrap_socket(socket_simple, server_side=True)
+
+
+# Server (TCP)
+""" # pylint: disable=pointless-string-statement
+# ncat 127.0.0.1 80
+sock_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # IPv6: AF_INET6
+sock_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock_server.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"lo\0")
+#sock_server.bind(("", 80))
+sock_server.bind(("127.0.0.1", 80))
+sock_server.listen(5)
+(sock_client, address) = sock_server.accept()
+
+data = sock_client.recv(1024)
+sock_client.send(data)
+
+for _sock in [sock_server, sock_client]:
+	_sock.shutdown(socket.SHUT_RDWR)
+	_sock.close()
+"""
+
+# Server (UDP)
+""" # pylint: disable=pointless-string-statement
+# ncat 127.0.0.1 80 -u
+# Needs to be re-recreated for every new client
+def get_udpsock(port):
+	udpsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # IPv6: AF_INET6
+	udpsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+	#udpsock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"lo\0")
+
+	# Also needed for client
+	#udpsock.bind(("", port))
+	udpsock.bind(("127.0.0.1", port))
+
+	# Multicast
+	#iface_index = socket.if_nametoindex(INTERFACE)
+	#mcopt = ipaddress.ip_address(MCAST_GRP).packed + struct.pack("i", intf_index)
+	#sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_JOIN_GROUP, mcopt)
+	# IPv4
+	##sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+	return udpsock
+
+sock_server = get_udpsock(80)
+# On multicast this will keep on receiving bytes from client sockets although we will call connect() in the next steps
+# -> Explicit mapping of "server-packet/addr <-> client socket" needed
+data1, addr = sock_server.recvfrom(1024)
+sock_client = get_udpsock(80)
+sock_client.connect(addr)
+
+sock_client.send(data1)
+data2 = sock_client.recv(1024)
+sock_client.send(data2)
+
+sock_client.close()
+sock_client.shutdown(socket.SHUT_RDWR)
+
+sock_server.close()
+
+"""
+
+# Client (TCP, UDP)
+""" # pylint: disable=pointless-string-statement
+# ncat -l 80
+sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # IPv6: AF_INET6
+# UDP
+#sock_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # IPv6: AF_INET6
+#sock_client.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_LOOP, True)
+sock_client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock_client.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"lo\0")
+sock_client.bind("127.0.0.1", 0)
+sock_client.connect(("127.0.0.1", 80))
+
+data = sock_client.recv(1024)
+sock_client.send(data)
+
+sock_client.shutdown(socket.SHUT_RDWR)
+sock_client.close()
+"""
+"""Precision Time Protocol v2, IEEE 1588-2008"""
+import logging
+
+from pypacker import pypacker
+from pypacker.structcbs import pack_Q, unpack_Q
+
+logger = logging.getLogger("pypacker")
+
+
+PTPV2_TYPE_SYNC				= 0x0  # Flags: PTP_TWO_STEP = True
+PTPV2_TYPE_DELAY_REQ			= 0x1
+# IEEE802.1AS is the Audio-Visual Bridging (AVB) profile of the IEEE1588 Precision Time Protocol
+PTPV2_TYPE_PATH_DELAY_REQ		= 0x2
+PTPV2_TYPE_PATH_DELAY_RESP		= 0x3
+
+PTPV2_TYPE_FOLLOW_UP			= 0x8
+PTPV2_TYPE_DELAY_RESP			= 0x9
+PTPV2_TYPE_PATH_DELAY_RESP_FOLLOWUP	= 0xA
+PTPV2_TYPE_ANNOUNCE			= 0xB  # Flags: PTP_TIMESCALE = True
+PTPV2_TYPE_SIGNALLING			= 0xC
+PTPV2_TYPE_MGMT				= 0xD
+
+CTRL_TYPE_SYNC				= 0x0
+CTRL_TYPE_DELAY_REQ			= 0x1
+CTRL_TYPE_FOLLOW_UP			= 0x2
+CTRL_TYPE_DELAY_RESP			= 0x3
+CTRL_TYPE_MGMT				= 0x4
+CTRL_TYPE_OTHER				= 0x5
+
+
+TYPES_TS_ACTIVATE = {PTPV2_TYPE_SYNC, PTPV2_TYPE_FOLLOW_UP, PTPV2_TYPE_ANNOUNCE,
+		PTPV2_TYPE_PATH_DELAY_RESP}
+TYPES_REQ_PORT_ACTIVATE = {PTPV2_TYPE_PATH_DELAY_RESP, PTPV2_TYPE_PATH_DELAY_RESP_FOLLOWUP}
+
+
+class PTPv2(pypacker.Packet):
+	__hdr__ = (
+		("transport_id", "B", PTPV2_TYPE_DELAY_REQ),
+		("version", "B", 2),
+		("msglen", "H", 0),
+		("subdomains", "B", 0),
+		("rsv", "B", 0),
+		("flags", "H", 0),
+		("corr", "Q", 0),
+		("rsv2", "I", 0),
+		("clockid", "Q", 0),
+		("srcport", "H", 0),
+		("seqid", "H", 0),
+		("ctrl", "B", 0),
+		("log", "B", 0),
+		("tssec_bts", "6s", None),
+		("tsnano", "I", None),
+		("reqclockid", "Q", None),
+		("reqportid", "H", None)
+	)
+
+	def __get_transport(self):
+		return (self.transport_id & 0xF0) >> 4
+
+	def __set_transport(self, value):
+		self.transport_id = ((value & 0xF) << 4) | (self.transport_id & 0xF)
+
+	transport = property(__get_transport, __set_transport)
+
+	def __get_id(self):
+		return self.transport_id & 0xF
+
+	def __set_id(self, value):
+		self.transport_id = (self.transport_id & 0xF0) | (value & 0xF)
+
+	id = property(__get_id, __set_id)
+
+	def __get_tssec(self):
+		return unpack_Q(b"\x00\x00" + self.tssec_bts)[0]
+
+	def __set_tssec(self, value):
+		self.tssec_bts = pack_Q(value)[2:]  # (8-2) bytes
+
+	# allows setting tssec as integer in contrast to tssec_bts
+	tssec = property(__get_tssec, __set_tssec)
+
+	class Announce(pypacker.Packet):
+		__hdr__ = (
+			("utcoff", "H", 0),
+			("prio1", "H", 0),
+			("clockclass", "B", 0),
+			("clockaccuracy", "B", 0),
+			("clockvariance", "H", 0),
+			("prio2", "B", 0),
+			("clockid", "Q", 0),
+			("stepsremoved", "H", 0),
+			("timesource", "B", 0)
+		)
+
+	__handler__ = {
+		PTPV2_TYPE_ANNOUNCE: Announce
+	}
+
+	def _dissect(self, buf):
+		header_len = 34
+		ptpv2_type = buf[0] & 0xF
+		hndl_id = None
+
+		if ptpv2_type in TYPES_TS_ACTIVATE:
+			#logger.debug("Re-activating tssec_bts, tsnano")
+			self.tssec_bts = b"\x00" * 6
+			self.tsnano = 0
+			header_len += 10
+
+		if ptpv2_type in TYPES_REQ_PORT_ACTIVATE:
+			#logger.debug("Re-activating reqclockid, reqportid")
+			self.reqclockid = 0
+			self.reqportid = 0
+			header_len += 10
+		elif ptpv2_type == PTPV2_TYPE_ANNOUNCE:
+			#logger.debug("Got announce")
+			hndl_id = ptpv2_type
+
+		return header_len, hndl_id
+
+import struct
+import logging
+
+logger = logging.getLogger("pypacker")
+
+# Allows to activate/decative the auto-update of a header field.
+# Note: _update_fields() has to be implemented
+FIELD_FLAG_AUTOUPDATE	= 1
+# Identifies the header field defining the next higher layer type
+# Allows to auto-set the value on concatenation: "pkt = eth0 + ip0" sets type field in eth0
+# Auto-sets FIELD_FLAG_AUTOUPDATE
+# Note: _update_fields() has to be implemented and _update_higherlayer_id() has to be called in it.
+FIELD_FLAG_IS_TYPEFIELD	= 2
+
+HEADERVALUETYPES_SIMPLE = {bytes, int}
+
+
+def unshare_headername_tlobj(obj):
+	if obj._headername_tlobj_shared:
+		obj._headername_tlobj = dict(obj._headername_tlobj)
+		obj._headername_tlobj_shared = False
+
+
+def unshare_formats(obj):
+	if obj._header_formats_shared:
+		obj._header_formats = list(obj._header_formats)
+		obj._header_formats_shared = False
+
+
+def unshare_values(obj):
+	if obj._header_values_shared:
+		obj._header_values = list(obj._header_values)
+		obj._header_values_shared = False
+
+
+def get_setter( # pylint: disable=unused-argument,too-many-arguments
+	t,
+	header_idx,
+	header_format_original,
+	is_field_type_simple,
+	is_field_static,
+	is_autoupdate):
+	"""
+	varname -- name of the variable to set the property for
+	is_field_type_simple -- get property for simple static or dynamic type if True, else TriggerList
+	is_field_type_simple -- if True: get static type (int, fixed size bytes, ...),
+		else dynamic (format "xs") which can change in format (eg DNS names)
+
+	return -- set-property for simple types or triggerlist
+	"""
+	def setfield_simple(obj, value):
+		"""
+		value -- bytes, int or None
+		"""
+		if obj._unpacked is False: # noqa E712
+			# "obj._unpacked == None" would mean: dissect not yet finished
+			obj._unpack()
+
+		# _dissect finished or still in _dissect:
+		#  Allow activation/deactivation and format changes to dynamic fields
+		if is_field_static:
+			# Switch active/inactive
+			if value is None and obj._header_formats[header_idx] != "0s":
+				unshare_formats(obj)
+				obj._header_formats[header_idx] = "0s"
+				# Will be set later
+				value = b""
+				obj._header_format_cached = None
+			elif value is not None and obj._header_formats[header_idx] == "0s":
+				unshare_formats(obj)
+				obj._header_formats[header_idx] = header_format_original
+				obj._header_format_cached = None
+		else:
+			# Simple dynamic field: update format. None is not allowed -> used b"" for that
+			format_new = "%ds" % len(value)
+			format_old = obj._header_formats[header_idx]
+
+			# Avoid unneeded updates
+			if format_new != format_old:
+				unshare_formats(obj)
+				obj._header_formats[header_idx] = "%ds" % len(value)
+				obj._header_format_cached = None
+
+		if obj._unpacked is None: # noqa E711
+			# Still in _dissect(), don't allow header field assigning
+			return
+
+		unshare_values(obj)
+		#logger.debug("Setting %s=%s in %r (_header_format_cached=maybe None)" % (
+		#	obj._headerfield_names[header_idx], value, obj.__class__))
+		obj._header_values[header_idx] = value
+		obj._header_cached = None
+		obj._notify_changelistener()
+
+	def setfield_triggerlist(obj, value):
+		if obj._unpacked is None:
+			# Still in _dissect(), don't allow header field assigning
+			return
+
+		# Triggerlist assigning is the same as clear+extend
+		headername = t._headerfield_names[header_idx]
+		# This will trigger init if not already done
+		tl = getattr(obj, headername)
+		# Content will be replaced
+		tl.clear()
+		# Wrap
+		if type(value) != list:
+			value = [value]
+		tl.extend(value)
+
+	if is_field_type_simple:
+		return setfield_simple
+
+	return setfield_triggerlist
+
+
+def get_getter(t, header_idx, is_field_static, tl_class=None):
+	headername = t._headerfield_names[header_idx]
+
+	def getfield_simple(obj):
+		if obj._unpacked is False: # noqa E712
+			# "obj._unpacked == False": dissect finished
+			obj._unpack()
+		#logger.debug("Getting field %r, %r=%r" % (headername, header_idx, obj._header_values[header_idx]))
+		# Handle inactive static fields. Dynamic fields return b"" at minimum (=inactive)
+		if is_field_static and obj._header_formats[header_idx] == "0s":
+			return None
+		return obj._header_values[header_idx]
+
+	def getfield_triggerlist(obj):
+		if obj._unpacked is None:
+			# We're in _dissect: allow self.tl_name(buf, lambda buf: [])
+			obj_l = [obj]
+
+			# obj._unpacked = None means: dissect not yet finished
+			def set_buf_cb(buf, cb):
+				unshare_headername_tlobj(obj_l[0])
+				# Length of buf must be the final/correct length
+				obj._headername_tlobj[headername] = [buf, cb]
+				#logger.debug("Setting tl buf for %r: %r, %r" % (headername, buf.tobytes(), cb))
+				unshare_formats(obj_l[0])
+				obj._header_formats[header_idx] = "%ds" % len(buf)
+				# Standard format was 0s -> new one probably different -> reset old cached format
+				obj._header_format_cached = None
+				# Header is unchanged/cached at initiation.
+				# _pack_header: tl has been put into _header_values by unpack
+			return set_buf_cb
+
+		#logger.debug("tl %s is being read" % headername)
+		buf_cb__tlobj_idx = obj._headername_tlobj.get(headername)
+
+		# Uninitialized: [memoryview(b"..."), lambda buf: []]
+		# or
+		# Initilaized: (tl_obj, 123)
+		if type(buf_cb__tlobj_idx) == tuple:
+			# More likely
+			tl = buf_cb__tlobj_idx[0]
+		else:
+			tlbuf, tlcb = buf_cb__tlobj_idx
+			#logger.debug("Init of tl: %r, via: %r" % (headername, tlbuf.tobytes()))
+			tl_obj = tl_class(
+				obj,
+				headername,
+				dissect_callback=tlcb,
+				buffer=tlbuf,
+			)
+			#logger.debug("Init of tl %r finished" % headername)
+			unshare_headername_tlobj(obj)
+			obj._headername_tlobj[headername] = (tl_obj, header_idx)
+			# Unchanged so far (_dissect -> tl access)
+			tl = tl_obj
+
+		return tl
+
+	if tl_class is None:
+		return getfield_simple
+
+	return getfield_triggerlist
+
+
+def configure_packet_header(t, hdrs, clsdict): # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+	"""
+	Configure header-infos from packet class given by [("name", "format", value, ...), ...]
+	"""
+	if hdrs is None:
+		return
+
+	# Create a property for every field: property a -> get/set access
+	# Using properties will slow down access to header fields but it's needed:
+	# This way we get informed about get-access (needed to check for unpack)
+	# more efficiently than using __getattribute__ (slow access for header
+	# fields vs. slow access for ALL class members).
+	for header_idx, hdr in enumerate(hdrs):
+		if type(hdr) is list:
+			# Assume extra header, not part of the unpack process -> no property needed, just for __repr__
+			for extraheader in hdr:
+				#logger.debug("Adding extra header: %r", extraheader)
+				setattr(t, extraheader[0], extraheader[1])
+				t._headerfield_names_extra.append(extraheader[0])
+			continue
+
+		headername = hdr[0]
+		headerformat = hdr[1]
+		headervalue = hdr[2]
+		field_flags = hdr[3] if len(hdr) >= 4 else None
+		subbyte_infos = hdr[4] if len(hdr) >= 5 else None
+
+		# Setup sub-byte describing infos: needed for summarization
+		if subbyte_infos is not None:
+			subbyte_infos_with_name = []
+			# Get property names. Slow but seems to be the only easy way
+			for subbyte_info in subbyte_infos:
+				prop, _, _ = subbyte_info
+				pname = "?"
+
+				for fname, fvalue in clsdict.items():
+					if fvalue == prop:
+						pname = fname
+						break
+				subbyte_info = subbyte_info + (pname,)
+				subbyte_infos_with_name.append(subbyte_info)
+			t._headerfieldname__subbyteinfo[headername] = subbyte_infos_with_name
+
+		# Sanity checks
+		# Max packet fields: [name, format, value, flags]
+		if len(hdr) > 5:
+			logger.warning("Amount of field definitions > 4: %r", hdr)
+
+		if headerformat is not None:
+			try:
+				struct.Struct(headerformat)
+			except struct.error:
+				raise Exception("Invalid format specified in class %s for header '%s': '%s'" % # pylint: disable=raise-missing-from
+					(t.__module__ + "." + t.__name__, headername, headerformat))
+
+			if headervalue is not None:
+				try:
+					struct.Struct(headerformat).pack(headervalue)
+				except struct.error:
+					raise Exception("Invalid value specified in class %s for header '%s' with format '%s': '%s'" % # pylint: disable=raise-missing-from
+						(t.__module__ + "." + t.__name__, headername, headerformat, headervalue))
+
+		t._headerfield_names.append(headername)
+		t._header_formats.append(headerformat)
+		t._header_values.append(headervalue)
+		t._headerfieldname__value_default[headername] = headervalue
+
+		is_field_type_simple = False
+		is_field_static = True
+
+		if headerformat is not None or (headervalue is None or type(headervalue) in HEADERVALUETYPES_SIMPLE):
+			# Simple static or simple dynamic type
+			# We got one of:
+			# - ("name", None, ...) = Format None = dynamic
+			# - ("name", format, ???) = Format given = static
+			is_field_type_simple = True
+
+			if headerformat is None:
+				# Assume simple dynamic field
+				is_field_static = False
+
+		if is_field_type_simple:
+			if headervalue is None:
+				# Inactive field
+				t._header_formats[header_idx] = "0s"
+				t._header_values[header_idx] = b""
+			elif headerformat is None:
+				# Dynamic field, update format
+				t._header_formats[header_idx] = "%ds" % len(headervalue)
+
+			# Check for auto-update
+			if field_flags is not None:
+				if field_flags & FIELD_FLAG_IS_TYPEFIELD != 0:
+					setattr(t, "_id_fieldname", headername)
+
+					field_flags |= FIELD_FLAG_AUTOUPDATE
+
+				if field_flags & FIELD_FLAG_AUTOUPDATE != 0:
+					# Remember which fields are auto-update ones
+					# xxx__au_active must be set: read by _update_higherlayer_id
+					# TODO: use sets? Deactivate on "= value" and activate on "= True"
+					setattr(t, headername + "_au_active", True)
+
+			# Setting/getting value is done via properties.
+			setattr(t, headername, property(
+				get_getter(t, header_idx, is_field_static),
+				get_setter(t, header_idx, headerformat, is_field_type_simple, is_field_static,
+					field_flags is not None and (field_flags & FIELD_FLAG_AUTOUPDATE) != 0)
+			))
+		else:
+			# Will be updated in _dissect -> self.tl_name(...)
+			t._header_formats[header_idx] = "0s"
+			t._header_values[header_idx] = b""
+
+			# Initial value of TiggerLists: [b""]
+			t._headername_tlobj[headername] = [memoryview(b""), lambda v: v]
+
+			setattr(t, headername, property(
+				get_getter(t, header_idx, is_field_static, tl_class=headervalue),
+				get_setter(t, header_idx, None, is_field_type_simple, is_field_static, False)
+			))
+			# Format and value needed for correct length in _unpack()
+			# Default is empty TriggerList, must be updated in _dissect via
+			# self.tl_name(buf, lambda tlbuf: [])
+
+
+def configure_packet_header_sub(t, hdrs_sub):
+	if hdrs_sub is None:
+		return
+
+	for name_cbget_cbset in hdrs_sub:
+		if len(name_cbget_cbset) < 2:
+			logger.warning("subheader length < 2: %d", len(name_cbget_cbset))
+			continue
+		#logger.debug("setting subheader: %s", name_cbget_cbset[0])
+
+		# (name, cb_get, cb_set)
+		if len(name_cbget_cbset) == 3:
+			setattr(t, name_cbget_cbset[0], property(name_cbget_cbset[1], name_cbget_cbset[2]))
+		# (name, cb_get)
+		else:
+			setattr(t, name_cbget_cbset[0], property(name_cbget_cbset[1]))
+
+
+class MetaPacket(type):
+	"""
+	This Metaclass is a more efficient way of setting attributes than using __init__.
+	This is done by reading name, format and default value out of a mendatory __hdr__
+	tuple in every subclass. This configuration is set one time when loading the module
+	(not at instantiation). Attributes can be normally accessed using "obj.field" notation.
+	Callflaw is: __new__ (loading module) -> __init__ (initiate class)
+
+	Header defintition example:
+	__hdr__ = (
+		("header1", "H", 123), # simple static field
+		("header2", "H", None), # simple static field, inactive
+		("header3", None, b"xxx"), # simple dynamic field
+		("header4", None, None), # simple dynamic field, inactive
+		("header5", None, Triggerlist) # TriggerList field
+	)
+
+	For values <1 byte a subheader definition eases up setting/getting those values:
+	# TODO: remove in favor of "explicit property + sub-byte description in __hdr__"
+	__hdr_sub__ = (
+		("header1_sub",
+			lambda val: val & 1  # callback to retrieve value
+			lambda obj, val: obj.__setattr__(val & 1)  # callback to set value
+		),
+		...
+	)
+
+	CAUTION:
+	- List et al are _SHARED_ among all instantiated classes! A copy is needed on
+	changes to them without side effects
+	- New protocols: header field names must be unique among other variable and method names
+	"""
+	def __new__(mcs, clsname, clsbases, clsdict):
+		# Slots (dct["__slots__"] = ...) can't be used because:
+		# Setting default values must be done in __init__ which increases delay (init for every instantiation...)
+		# Sidenote: Setting default values here creates readonly exception later:
+		# __slots__ = ("var", ...) -> t.var = None -> p = Clz() -> p.var = 123 won't work (var is readonly)
+		# See: https://stackoverflow.com/questions/820671/python-slots-and-attribute-is-read-only
+		t = type.__new__(mcs, clsname, clsbases, clsdict)
+		t._headerfield_names = []
+		# Extra headers, especially paddings. Needed for: __repr__ (recreate header assignation code)
+		t._headerfield_names_extra = []
+		t._header_formats = []
+		t._header_formats_shared = True
+		t._header_values = []
+		t._header_values_shared = True
+		t._headerfieldname__value_default = {}
+		# TriggerList objects: headername -> tl_object or [b"...", lambda buf: []]
+		t._headername_tlobj = {}
+		t._headername_tlobj_shared = True
+		# Header names of changed tl (for late format update)
+		t._tlchanged = set()
+		t._tlchanged_shared = True
+		# Sub-byte infos: property, start bit , stop bit (inclusive)
+		# Only for numeric values
+		t._headerfieldname__subbyteinfo = {}
+
+		# Varname holding the fieldname containing the id associated with body handler
+		# eg Ethernet -> "type" or IP -> "p"
+		t._id_fieldname = None
+
+		hdrs = getattr(t, "__hdr__", None)
+		configure_packet_header(t, hdrs, clsdict)
+
+		# Get sub-byte infos: [("name", cb_get, cb_set), ...]
+		hdrs_sub = getattr(t, "__hdr_sub__", None)
+		configure_packet_header_sub(t, hdrs_sub)
+
+		# Get handler classes, assume Packet class has no member "__handler__"
+		handler = getattr(t, "__handler__", None)
+
+		if handler is not None and len(handler) > 0:
+			if handler.__class__ is not dict:
+				logger.warning("Invalid format of __handler__: not a dictionary! %r", handler)
+			else:
+				t.load_handler(t, handler)
+
+		# Set of higher_layer classes which force dissecting them (update dependants):
+		# IP->TCP => IP changed -> TCP needs checksum update and
+		# needs to be dissected for this -> TCP is update dependant of IP
+		update_deps = getattr(t, "__update_dependants__", set())
+		t._update_dependants = {*[ud.__class__ for ud in update_deps]}
+
+		# Cached format
+		t._header_format_cached = struct.Struct(">" + "".join(t._header_formats))
+		# Cached header, return this if nothing changed, otherwise None
+		t._header_cached = t._header_format_cached.pack(*t._header_values)
+		# Indicates if header values got already unpacked
+		# [True|False] = Status after dissect, None = pre-dissect (not unpacked)
+		t._unpacked = None
+		# Body as raw byte string (Will be set in __init__, None if handler is present)
+		t._body_bytes = b""
+		# Track changes to body value like [None | bytes | body-handler] -> [None | bytes | body-handler]
+		# Does not track achanges in body-handler itself
+		t._body_value_changed = False
+		# Next lower layer: a = b + c -> b will be lower layer for c
+		t._lower_layer = None
+		t._higher_layer = None
+		# Objects which get notified on changes on header or body (shared),
+		# eg packet_parent -> TriggerList[packet_sub, ...]:
+		# Changes to packet_sub need to be known by packet_parent for format updates
+		# and TriggerList to clear cache.
+		# Needs to be None do identify uninitialized state.
+		t._changelistener = None
+		# Parent of the packet which is contained in a triggerlist
+		# parent_packet.triggerlist[sub] -> sub._triggelistpacket_parent == parent_packet
+		t._triggelistpacket_parent = None
+		# Lazy handler data: [name, class, bytes]
+		t._lazy_handler_data = None
+		# Concatination of errors, see pypacker.py -> ERROR_...
+		t._errors = 0
+		return t
+
+"""
+Simple packet creation and parsing logic.
+"""
+import logging
+import random
+import re
+import struct
+from struct import Struct
+import inspect
+from ipaddress import IPv6Address, v6_int_to_packed
+from collections import defaultdict
+
+# Imported to make usable via import "pypacker.[FIELD_FLAG_AUTOUPDATE | FIELD_FLAG_IS_TYPEFIELD]"
+from pypacker.pypacker_meta import MetaPacket, FIELD_FLAG_AUTOUPDATE, FIELD_FLAG_IS_TYPEFIELD # pylint: disable=unused-import
+from pypacker.structcbs import pack_mac, unpack_mac, pack_ipv4, unpack_ipv4, pack_H, unpack_Q, pack_Q
+from pypacker.lazydict import LazyDict
+
+logger = logging.getLogger("pypacker")
+
+
+def recusive_dict():
+	return defaultdict(recusive_dict)
+
+
+PROG_NONVISIBLE_CHARS		= re.compile(b"[^\x21-\x7e]")
+PROG_SPACED_SINGLE_CHAR		= re.compile(" . ")
+HEADER_TYPES_SIMPLE		= {int, bytes, type(None)}
+TRIGGERLIST_TYPES_SIMPLE	= {bytes, tuple}
+
+DIR_SAME		= 1
+DIR_REV			= 2
+DIR_UNKNOWN		= 4
+DIR_NOT_IMPLEMENTED	= 255
+
+ERROR_NONE		= 0
+ERROR_DISSECT		= 1  # This layer had an error when parsing/creating an upper layer
+
+VARFILTER_TYPES = {bytes, int, property}
+
+
+class NotEnoughBytesException(Exception):
+	pass
+
+
+class DissectException(Exception):
+	pass
+
+
+class Packet(metaclass=MetaPacket):
+	"""
+	Base packet class, with metaclass magic to generate members from self.__hdr__ field.
+	This class can be instatiated via:
+
+		Packet(byte_string)
+		Packet(key1=val1, key2=val2, ...)
+
+	Every packet got a header and a body. Body-data can be raw byte string OR a packet itself
+	(the body handler) which itself stores a packet etc. This continues until a packet only
+	contains raw bytes (highest layer). The following schema illustrates the Packet-structure:
+
+	Packet structure
+	================
+
+	[Packet:
+	headerfield_1
+	headerfield_2
+	...
+	headerfield_N
+	[Body -> Packet:
+		headerfield_1
+		...
+		headerfield_N
+		[Body: -> Packet:
+			headerfields
+			...
+			[Body: -> b"some_bytes"]
+	]]]
+
+	A header definition like __hdr__ = (("name", "12s", b"defaultvalue"),) will define a header field
+	having the name "name", format "12s" and default value b"defaultvalue" as bytestring. Fields will
+	be added and concatinated in order of definition.
+
+	Body can have these states:
+	- Lazy handler not yet dissected (body bytes are internally stored as raw bytes)
+		-> Higher layer gets dissected
+		-> Higher layer is packet OR raw bytes (if not dissectable)
+	- Body is raw bytes
+
+
+	Minimum features
+	================
+
+	- Auto-decoding of headers via given format-patterns (defined via __hdr__)
+	- Auto-decoding of body-handlers (IP -> parse IP-data -> add TCP-handler to IP -> parse TCP-data..)
+	- Access of lower/higher layers via layer1.lower_layer, layer1.higher_layer or "layer1[...]" notation
+	- There are three types of headers:
+	1) Simple constant fields (constant format)
+		Format for __hdr__: ("name", "format", value [, FLAGS])
+
+	2) Simple dynamic fields (byte string which changes in length)
+		Format for __hdr__: ("name", None, b"bytestring" [, FLAGS])
+		Such types MUST get initiated in _dissect() because there is no way in guessing
+		the correct format when unpacking values!
+
+	3) TriggerList (List containing Packets, bytes like b"xyz" or tuples like (ID, value))
+		Format for __hdr__: ("name", None, TriggerList)
+		Such types MUST get initiated in _dissect() because there is no way in guessing
+		the correct format when unpacking values!
+
+	The FLAGS value for simple constant and dynamic fields can be used to mark auto-update field
+	(see pypacker_meta.py). This will create a variable XXX_au_active one time for a field XXX
+	which can be used activate/deactivate the auto-update externally and which can be read in
+	the bin()-method internally.
+	- Convenient access for standard types (e.g. MAC, IP address) using string-representations
+		This is done by appending "_s" to the attributename:
+		ip.src_s = "127.0.0.1"
+		ip_src_str = ip.src_s
+
+		Implementation info:
+		Convenient access should be set via varname_s = pypacker.Packet.get_property_XXX("varname")
+		Get/set via is always done using strings (not byte strings).
+	- Concatination via "packet = layer1 + layer2 + layerX"
+	- Header-values with length < 1 Byte should be set by using properties
+	- Deactivate/activate non-TriggerList header fields, eg pkt.hdr=None (inactive), pkt.hdr=b"xxx" (active)
+	- Checksums (static auto fields in general) are auto-recalculated when calling
+		bin(update_auto_fields=True) (default: active)
+		The update-behaviour for every single field can be controlled via
+		"pkt.VARNAME_au_active = [True|False]
+	- Ability to check direction to other Packets via "[is_]direction()"
+	- No correction of given raw packet-bytes e.g. checksums when creating a packet from it
+		The internal state will only be updated on changes to headers or data later on
+	- General rule: less changes to headers/body-data = more performance
+
+
+	Call-flows
+	==========
+		pypacker(bytes)
+			-> _dissect(): has to be overwritten, get to know/verify the real header-structure
+				-> (optional): initiate triggerlists via tlname(bts, cb)
+				-> (optional): Set values for dynamic fields via self.xyz = b"test" (see layer567.dns -> Query)
+				-> (optional): Activate/deactivate fields
+				-> return hlen [, id [, bodybts]]
+			-> (optional) on access to simple headers: _unpack() sets all header values of a layer
+			-> (optional) on access to TriggerList headers: lazy parsing gets triggered
+			-> (optional) on access to body handler: next upper layer gets initiated
+
+		pypacker(keyword1=value, ...)
+			-> (optional) set headers
+
+		pypacker()
+			-> Only sets standard values for simple headers
+
+	"""
+
+	# Dict for saving "body type ids -> handler classes" globaly:
+	# { class_name_current : {id_upper : handler_class_upper} }
+	_id_handlerclass_dct = {}
+	# Dict for saving "handler class -> body type ids" globaly:
+	# { class_name_current : {handler_class_upper : id_upper} }
+	_handlerclass_id_dct = {}
+	# Constants for Packet-directions
+	DIR_SAME		= DIR_SAME
+	DIR_REV			= DIR_REV
+	DIR_UNKNOWN		= DIR_UNKNOWN
+	DIR_NOT_IMPLEMENTED	= DIR_NOT_IMPLEMENTED
+
+	def __init__(self, *args, **kwargs): # pylint: disable=too-many-branches
+		"""
+		Packet constructors:
+
+		Packet(bytebuf [, lower_layer_object])
+			Note: lower_layer_object only for internal usage
+		Packet(keyword1=val1, keyword2=val2, ...)
+
+		bytestring -- Packet bytes to build packet from (use memoryview for best performance)
+		lower_layer_object -- For internal usage only. Used by _dissect()
+			Ideally the current layer is agnostic to the lower layer. But sometimes...
+		keywords -- Keyword arguments correspond to header fields to be set
+		"""
+
+		if args:
+			# args[0]: bytes or memoryview, should be ok to double-pack
+			mview_all = memoryview(args[0])
+
+			if len(args) == 2:
+				# Make lower layer accessible. This won't change the body
+				self._lower_layer = args[1]
+				# An exception on higher layer will lead to body bytes instead of handler in lower layer (see _lazy_init_handler)
+				# Should occur mostly on >layer4 protocols, eg TCP -> splitted packet.
+				hlen_bodyid_bodybts = self._dissect(mview_all)
+			else:
+				# This is the lowest layer, handle exception to make it more user friendly (unlikely)
+				try:
+					hlen_bodyid_bodybts = self._dissect(mview_all)
+				except:
+					raise DissectException( # pylint: disable=raise-missing-from
+						"Could not initiate packet %r, not enough/wrong bytes given?"
+						" Got %d bytes: %r, std format needs %d" % (
+							self.__class__,
+							len(mview_all), mview_all.tobytes(),
+							self._header_format_cached.size)
+					)
+
+			# hlen | (hlen, handler_id) | (hlen, handler_id, bodybts)
+			handler_id = None
+			bodybts_dissect = None
+
+			if hlen_bodyid_bodybts.__class__ == int:
+				# Assume hlen
+				hlen = hlen_bodyid_bodybts
+			else:
+				# Assume [hlen, handler_id, ?]
+				hlen = hlen_bodyid_bodybts[0] # pylint: disable=unsubscriptable-object
+				handler_id = hlen_bodyid_bodybts[1] # pylint: disable=unsubscriptable-object
+
+				if len(hlen_bodyid_bodybts) == 3:
+					bodybts_dissect = hlen_bodyid_bodybts[2] # pylint: disable=unsubscriptable-object
+
+			# Not enough bytes means packet can't be unpacked.
+			# Check this here and not in _dissect() as it's always the same for all dissects.
+			if len(args[0]) < hlen:
+				raise NotEnoughBytesException(
+					"Not enough bytes for packet class %s: given=%d < expected=%d" %
+					(self.__class__, len(args[0]), hlen))
+
+			self._header_cached = mview_all[:hlen]
+
+			if bodybts_dissect is None:
+				# More likely
+				bodybts = mview_all[hlen:]
+			else:
+				bodybts = bodybts_dissect
+
+			# Prepare handler for lazy dissect
+			# handler_id may be None and bodybts explicitly given: [hlen, None, bodybts]
+			# Avoid unneeded handler preparation by checking for minimum bytes
+			if handler_id is not None and len(bodybts) > 0:
+				try:
+					# Likely to succeed
+					clz_upper = Packet._id_handlerclass_dct[self.__class__][handler_id]
+					#logger.debug("Lazy config of handler:\n%s(%r: %r)\n-> %s(%r: %r)",
+					#	self.__class__, len(self._header_cached.tobytes()), self._header_cached.tobytes(),
+					#	clz_upper, len(bodybts.tobytes()), bodybts.tobytes())
+					self._lazy_handler_data = [clz_upper, bodybts]
+					bodybts = None
+				except:
+					#except Exception as ex:
+					#logger.warning("Can't set lazy handler config (invalid handler id?): base=%s, init data: hlen=%r, reason: %r",
+					#	self.__class__, hlen_bodyid_bodybts, ex)
+					#logger.exception(ex)
+					pass
+
+			# Can be None if layer was initiated successfully
+			self._body_bytes = bodybts
+			# Raw bytes given = no changes
+			self._reset_changed()
+			# Dissect finished, _unpacked: None -> False
+			self._unpacked = False
+		else:
+			# Keyword parameters given: use default values and overwrite w/ keyword parameters
+			# No bytes given = Use original values = nothing to unpack
+			self._unpacked = True
+
+			for k, v in kwargs.items():
+				#logger.debug("Setting via keyword arg: %r=%r" % (k, v))
+				setattr(self, k, v)
+			# Assigning via Packet(key=val) will be the same as packet.key = val -> no reset ("directly assigned" = changed)
+
+	def _dissect(self, buf): # pylint: disable=unused-argument
+		"""
+		Dissect packet bytes. See __init__ -> Call-flows
+		buf -- bytestring to be dissected
+		return -- header_length [, handler_id | None [, bodybts]]
+		"""
+		# _dissect(...) was not overwritten: no changes to header, return original header length
+		return self._header_format_cached.size
+
+	def __len__(self):
+		"""Return total length (= header + all upper layer data) in bytes."""
+		if self._lazy_handler_data is not None:
+			# Lazy data present: avoid unneeded parsing
+			return self.header_len + len(self._lazy_handler_data[1])
+		if self._higher_layer is not None:
+			return self.header_len + len(self._higher_layer)
+
+		# Assume body bytes are set
+		return self.header_len + len(self._body_bytes)
+
+	#
+	# Public access to header length: keep it uptodate
+	#
+	def _get_header_len(self):
+		# Update format to get the real length
+		self._update_cached_header_format_and_tl_states()
+		return self._header_format_cached.size
+
+	# Update format if needed and return actual header size
+	header_len = property(_get_header_len)
+
+	def _get_dissect_error(self):
+		return (self._errors & ERROR_DISSECT) != 0
+
+	dissect_error = property(_get_dissect_error)
+	errors = property(lambda obj: obj._errors)
+
+	def is_error_present(self, error):
+		"""
+		Check if one of pypacker.ERROR_XXX is present
+		error -- The error to be check against internal error state
+		"""
+		return (self._errors & error) != 0
+
+	def _get_bodybytes(self):
+		"""
+		Return raw data bytes or handler bytes (including all upper layers) if present.
+		This is the same as calling bin() but:
+		- Excluding this header
+		- Without resetting changed-status
+		- No triggering of header updates
+		"""
+		if self._lazy_handler_data is not None:
+			# No need to parse: raw bytes for all upper layers
+			if type(self._lazy_handler_data[1]) == memoryview:
+				self._lazy_handler_data[1] = self._lazy_handler_data[1].tobytes()
+			return self._lazy_handler_data[1]
+
+		if self._higher_layer is not None:
+			# Some handler was set
+			hndl = self._higher_layer
+			return hndl._pack_header() + hndl._get_bodybytes()
+
+		# Return raw bytes (no handler)
+		if type(self._body_bytes) == memoryview:
+			self._body_bytes = self._body_bytes.tobytes()
+
+		return self._body_bytes
+
+	def _set_bodybytes(self, value):
+		"""
+		Set body bytes to value (bytestring). This will reset any handler.
+
+		value -- a bytestring
+		"""
+		#logger.debug(self.__class__)
+		if self._higher_layer is not None:
+			# Reset all handler data
+			self._set_higherlayer(None)
+
+		self._body_bytes = value
+		self._body_value_changed = True
+		self._lazy_handler_data = None
+		self._notify_changelistener()
+
+	# Get and set bytes for body. Note: this returns bytes even if higher_layer returns None.
+	# Setting body_bytes will clear any handler (higher_layer will return None afterwards).
+	body_bytes = property(_get_bodybytes, _set_bodybytes)
+
+	def _get_higherlayer(self):
+		"""
+		Retrieve next upper layer. This is the only direct way to do this.
+		return -- handler object or None if not present.
+		"""
+		#logger.debug(self.__class__)
+		if self._lazy_handler_data is not None:
+			self._lazy_init_handler()
+		return self._higher_layer
+
+	@staticmethod
+	def get_id_for_handlerclass(origin_class, handler_class):
+		"""
+		return -- id associated for the given handler_class used in class origin_class.
+			None if nothing was found. Example: origin_class = Ethernet, handler_class = IP,
+			id will be ETH_TYPE_IP
+		"""
+		try:
+			# Likely to succeed
+			return Packet._handlerclass_id_dct[origin_class][handler_class]
+		except:
+			pass
+		return None
+
+	def _set_higherlayer(self, hndl, notify_changelistener=True):
+		"""
+		Set body handler for this packet and make it accessible via layername[addedtypeclass]
+		like ethernet[ip.IP]. If handler is None any handler will be reset and data will be set to an empty byte string.
+
+		hndl -- The handler to be set: None or a Packet instance. Setting to None
+			will clear any handler and set body_bytes to b"".
+		notify_changelistener -- Relevant for eg: if this packet is part of a tl -> later changes
+		"""
+		#logger.debug(self.__class__)
+		#logger.debug("Higher layer will be: %r" % hndl.__class__)
+		if self._higher_layer is not None: # pylint: disable=access-member-before-definition
+			# Clear old linked data of upper layer if body handler is already parsed
+			# A.B -> A.higher_layer = x -> B.lower_layer = None
+			self._higher_layer._lower_layer = None # pylint: disable=access-member-before-definition
+
+		if hndl is not None:
+			# Set a new body handler
+			# Associate ip, arp etc with handler-instance to call "ether.ip", "ip.tcp" etc
+			self._body_bytes = None
+			hndl._lower_layer = self
+		else:
+			# Avoid (body_bytes=None, handler=None)
+			self._body_bytes = b""
+
+		self._higher_layer = hndl
+		self._body_value_changed = True
+		self._lazy_handler_data = None
+
+		if notify_changelistener:
+			self._notify_changelistener()
+
+	# Deprecated, wording "higher_layer/highest_layer layer is more consistent
+	upper_layer = property(_get_higherlayer, _set_higherlayer)
+	# Get/set body handler. Note: this will force lazy dissecting when reading
+	higher_layer = property(_get_higherlayer, _set_higherlayer)
+
+	def _set_lower_layer(self, hndl):
+		if self._lower_layer is not None:
+			# Remove upper layer (us) from current lower layer before
+			# setting a new lower layer
+			self._lower_layer.higher_layer = None
+
+		if hndl is not None:
+			hndl.higher_layer = self
+
+	# Get/set body handler
+	lower_layer = property(lambda pkt: pkt._lower_layer, _set_lower_layer)
+
+	def _lowest_layer(self):
+		current = self
+
+		while current._lower_layer is not None:
+			current = current._lower_layer
+
+		return current
+
+	def _get_highest_layer(self):
+		current = self
+
+		# unpack all layer, assuming string class will be never found
+		while current.higher_layer is not None:
+			current = current.higher_layer
+
+		return current
+
+	lowest_layer = property(_lowest_layer)
+	highest_layer = property(_get_highest_layer)
+
+	def disconnect_layer(self):
+		"""
+		Disconnect layer B from ABC and return B. Connects AC with each other.
+		This is the same as 'pkt.lower_layer = pkt.higher_layer'
+		without returning the middle layer (pkt).
+
+		return -- This layer
+		"""
+		# Connect lower/upper layer of this layer
+		if self.lower_layer is not None and self.higher_layer is not None:
+			self.lower_layer.higher_layer = self.higher_layer
+
+		self.lower_layer = None
+		self.higher_layer = None
+
+		return self
+
+	def _lazy_init_handler(self):
+		"""
+		Lazy initialize the handler previously set by _init_handler.
+		Make sure this is not called more than once
+		"""
+		handler_data = self._lazy_handler_data
+
+		# Likely to succeed
+		try:
+			# Instantiate handler class using lazy data buffer
+			handler_obj = handler_data[0](handler_data[1], self)
+			# No notify_changelistener:
+			# Avoid informing change listener if we are part of a tl (no changes so war)
+			self._set_higherlayer(handler_obj, notify_changelistener=False)
+			# This was a lazy init: same as direct dissecting -> no body change
+			self._body_value_changed = False
+		except:
+			# TODO: activate this and below comment for debugging
+			#except Exception as ex:
+			# Error on lazy dissecting: set raw bytes
+			self._errors |= ERROR_DISSECT
+			self._body_bytes = handler_data[1]
+			"""
+			logger.warning("Can't initiate handler %r (malformed packet?):"
+				" base=%s, reason: %r,"
+				" bytes for init: %r, current higher layer: %r",
+				handler_data[0], self.__class__, ex,
+				self._body_bytes.tobytes() if type(self._body_bytes) is memoryview else self._body_bytes,
+				self._higher_layer)
+			logger.exception(ex)
+			"""
+
+		self._lazy_handler_data = None
+
+	def __getitem__(self, pkt_clzs):
+		"""
+		Check every layer upwards (inclusive this layer) for the given criteria
+		and return the matched layers. Stops searching as soon as a layer doesn't match
+		or end of needle/haystack reached. Example:
+
+		a, b, c, d = pkt[
+			(A, lambda a: a.src="123"), # Type A and filter must match
+			None, # This layer can be anything
+			C, # Only type must match
+			(None, lambda d: d.__class__ == d), # No type given but filter must match
+		]
+
+		All layers have to match starting from A (explicit is better than implicit).
+		Comparing starts from first layer and stops on first mismatch, otherwise ALL layers would have to
+		be parsed all the time until a matching layer (to A) appears (starting layer
+		is not known a priori).
+
+		pkt_clzs -- Packet classes to search for. Optional lambdas can be used for filtering each layer.
+		return -- All matching layers like ret=[a, b, None, None]
+			with len(ret) == len(input_list)
+		"""
+		#logger.debug(self.__class__)
+		p_instance = self
+
+		# Multi-value index search
+		if type(pkt_clzs) is tuple:
+			# Keep unpacking until pkt_clzs is found (no intermediate storing)
+			pkt_clzs_len = len(pkt_clzs)
+			layers = []
+
+			for pkt_clz in pkt_clzs:
+				gotmach_cb = None
+				gotmatch = False
+
+				# (A|None, lambda a: a.src="123")
+				if type(pkt_clz) is tuple:
+					pkt_clz, gotmach_cb = pkt_clz
+				# else: pkt_clz = A
+
+				# 3 cases: None, Type, (Type, gotmach_cb), (None, gotmach_cb)
+				type_ignore_or_matches = pkt_clz is None or pkt_clz == p_instance.__class__
+
+				if gotmach_cb is None:
+					# Onle type comparison, None == "ignore"
+					gotmatch = type_ignore_or_matches
+				else:
+					if type_ignore_or_matches:
+						# Type not given or matches -> further check gotmach_cb
+						try:
+							gotmatch = gotmach_cb(p_instance)
+						# Exceptions can happen if gotmach_cb is (?, lambda pkt: ...)
+						# Eg: checking attributes on wrong packet type
+						except (NameError, AttributeError) as ex:
+							# Re-raise the worst Exceptions, others are ignored silently and lead to "None" layers
+							logger.warning("lambda gotmach_cb is invalid, check code:")
+							logger.exception(ex)
+						except:
+							pass
+
+				layers.append(p_instance if gotmatch else None)
+
+				# No match or highest layer reached (no more layers or end of needle reached)
+				if not gotmatch or p_instance.higher_layer is None or len(layers) == pkt_clzs_len:
+					break
+				# End of match sequence in pkt_clzs not reached, go higher
+				p_instance = p_instance.higher_layer
+
+			# Return matching layers
+			return layers if len(layers) == pkt_clzs_len else layers + [None] * (pkt_clzs_len - len(layers))
+
+		# Single-value index search
+		# Keep unpacking until pkt_clz is found (no intermediate storing)
+		# WARNING: this is highly imperformant because ALL layers get dissected all the time
+		while not type(p_instance) is pkt_clzs:
+			# This will auto-parse lazy handler data via _get_higherlayer()
+			p_instance = p_instance.higher_layer
+
+			if p_instance is None:
+				break
+
+		return p_instance
+
+	def __iter__(self):
+		"""
+		Iterate over every layer starting from this layer.
+		To start from the lowest layer use "for l in pkt.lowest_layer".
+		"""
+		p_instance = self
+		# Unpack until highest layer; assume string class never gets found as layer
+		while p_instance is not None:
+			yield p_instance
+			# This will auto-parse lazy handler data via _get_higherlayer()
+			p_instance = p_instance.higher_layer
+
+			if p_instance is None:
+				break
+
+	def __contains__(self, clz):
+		return self[clz] is not None
+
+	def __eq__(self, clz):
+		"""
+		Compare class of this object to the given class/object
+		"""
+		# Convert object to its class
+		if not type(clz) == MetaPacket:
+			clz = clz.__class__
+		return self.__class__ == clz
+
+	def dissect_full(self):
+		"""
+		Recursive read all layer inlcuding header up to highest layer.
+		"""
+		for name in self._headerfield_names:
+			getattr(self, name)
+
+		if self.higher_layer is not None:
+			self.higher_layer.dissect_full()
+
+	def __add__(self, packet_or_bytes_to_add):
+		"""
+		Concatinate a packet with another packet or bytes.
+		Note: Beware of side effects as Packets remain connected until removed,
+		eg via pkt.higher_layer = None.
+
+		packet_or_bytes_to_add -- The packet or bytes to be added as highest layer
+		"""
+		if type(packet_or_bytes_to_add) is not bytes:
+			self.highest_layer.higher_layer = packet_or_bytes_to_add
+		else:
+			self.highest_layer.body_bytes += packet_or_bytes_to_add
+		return self
+
+	def __iadd__(self, packet_or_bytes_to_add):
+		"""
+		Concatinate a packet with another packet or bytes.
+		Note: Beware of side effects as Packets remain connected
+
+		packet_or_bytes_to_add -- The packet or bytes to be added as highest layer
+		"""
+		if type(packet_or_bytes_to_add) is not bytes:
+			self.highest_layer.higher_layer = packet_or_bytes_to_add
+		else:
+			self.highest_layer.body_bytes += packet_or_bytes_to_add
+		return self
+
+	def split_layers(self):
+		"""
+		Splits all layers to independent ones starting from this one not connected to each other
+		e.g. A.B.C -> [A, B, C]
+		return -- [layer1, layer2, ...]
+		"""
+		layers = list(self)
+
+		# Disconnect all layers
+		for layer in layers:
+			# Avoid overwriting bytes, only reset handler
+			if layer._body_bytes is None:
+				layer.higher_layer = None
+			layer.lower_layer = None
+		return layers
+
+	def summarize(self): # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+		"""
+		Print a summary of this layer.
+		Optional: Call bin() to update auto-update fields.
+		"""
+		# Values need to be unpacked to be shown
+		#logger.debug(self.__class__)
+		self._unpack()
+
+		# Create key=value descriptions
+		# Show all header even deactivated ones
+		layer_sums_l = []
+
+		OFF_FIELDNAME_TO_COLON = 17
+		SPACE_FIELDNAME_TO_AFTER_COLON = " " * (OFF_FIELDNAME_TO_COLON + 2)
+
+		for idx, name in enumerate(self._headerfield_names): # pylint: disable=too-many-nested-blocks
+			#logger.debug("Getting %s" % name)
+			val = getattr(self, name)
+			val_alt = ""
+			val_translated = ""
+
+			if hasattr(self, name + "_s"):
+				val_alt = " = " + getattr(self, name + "_s")
+
+			if hasattr(self, name + "_t"):
+				val_translated, pmcv = getattr(self, name + "_t") # pylint: disable=unused-variable
+
+				# module, class, varname
+				if val_translated != "":
+					# Remove known parts from description (default is module level)
+					# pypacker.layerX.modulename.[Classname.]varname -> [Classname.]varname
+					val_translated = " = " + val_translated
+			# Values: int
+			if type(val) is int:
+				hdr_format = self._header_formats[idx]
+				layer_sums_l.append("%-13s (%s): 0x%X = %d = %s" % (name, hdr_format, val, val,
+					bin(val)) + val_alt + val_translated)
+
+				if name in self._headerfieldname__subbyteinfo:
+					subbyte_infos = self._headerfieldname__subbyteinfo[name]
+					# Assume last element ist most right. Format: (prop, start, stop, name)
+					binlen_max = subbyte_infos[-1][2]
+
+					for prop, bstart, bstop, propname in subbyte_infos:
+						propval = prop.fget(self)
+						propval_bin = bin(propval)[2:]
+						bin_add_left = "0" * (((bstop - bstart) + 1) - len(propval_bin))
+						binvalue_spaced = " " * bstart + bin_add_left + propval_bin
+						binvalue_spaced += " " * (binlen_max - len(binvalue_spaced) + 1)
+						val_translated_subbyte = ""
+
+						if hasattr(self, propname + "_t"):
+							val_translated_subbyte, val_translated_subbyte_mcv = getattr(self, propname + "_t") # pylint: disable=unused-variable
+							#logger.debug("Got %s=%s" % (propname + "_t", val_translated_subbyte))
+
+							# module, class, varname
+							if val_translated_subbyte != "":
+								val_translated_subbyte = " = " + val_translated_subbyte
+
+						descr = SPACE_FIELDNAME_TO_AFTER_COLON + ("%-8s" % propname) +\
+							" = " + binvalue_spaced +\
+							(" = %d" % propval) +\
+							val_translated_subbyte
+						layer_sums_l.append(descr)
+
+			# Values: bytes
+			elif type(val) is bytes:
+				bts_cnt = "(%d)" % len(val)
+				layer_sums_l.append("%-9s %7s: %s" % (name, bts_cnt, val) + val_alt + val_translated)
+			# Inactive
+			elif val is None:
+				layer_sums_l.append("%-17s: (inactive)" % name)
+			# Values: Triggerlist (can contain Packets, tuples, bytes)
+			else:
+				#logger.debug("%r %r" % (self.__class__, name))
+				layer_sums_l.append("%-17s: %s" % (name, val))
+
+		try:
+			# Add padding info, not part of _headerfield_names. See Ethernet or SCTP
+			if "padding" not in self._headerfield_names:
+				#logger.debug("Trying to get padding in %r" % self.__class__)
+				value_padding = getattr(self, "padding")
+				#logger.debug("padding is: %r" % value_padding)
+				if len(value_padding) > 0:
+					bts_cnt = "(%d)" % len(value_padding)
+					layer_sums_l.append(
+						"%-9s %7s: %s (lower layer = more outer padding)" % ("//padding", bts_cnt, value_padding))
+		except:
+			# No padding
+			pass
+
+		if self.higher_layer is None:
+			# No upper layer present: describe body bytes
+			bts_cnt = "(%d)" % len(self.body_bytes)
+			layer_sums_l.append("%10s %6s: " % ("body_bytes", bts_cnt) + "%s" % self.body_bytes)
+
+		layer_sums = "%s\n\t%s" % (
+			self.__module__[9:] + "." + self.__class__.__name__,
+			"\n\t".join(layer_sums_l))
+
+		return layer_sums
+
+	def __str__(self):
+		#logger.debug(self.__class__)
+		# Recalculate fields like checksums, lengths etc
+		if self._header_cached is None or self._body_value_changed:
+			self.bin()
+		# This does lazy init of handler
+		upperlayer_str = "\n%s" % self.higher_layer if self.higher_layer is not None else ""
+		# TODO: Can be removed after debugging
+		try:
+			return self.summarize() + upperlayer_str
+		except ValueError as e:
+			logger.warning("Could not summarize layer %s", self.__class__)
+			raise e
+
+	def __repr__(self):
+		package__imports, layer_descr = self._get_repr()
+		imports = []
+
+		for modulename, classnames in package__imports.items():
+			imports.append("from %s import %s" % (modulename, ", ".join(classnames)))
+		imports.append("\n")
+
+		return "\n".join(imports) + layer_descr
+
+	@staticmethod
+	def _repr_collect_for_headerfield( # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
+		layer,
+		headerfield_name,
+		headerfield_value,
+		name_value_descr,
+		package__imports,
+		varnames_in_layer):
+		"""
+		if layer.__class__.__name__ == "TCP":
+			logger.warning("Checking headerfield_name %s" % headerfield_name)
+		"""
+		headerfield_value = getattr(layer, headerfield_name)
+
+		# Don't show default values
+		if layer._headerfieldname__value_default[headerfield_name] == headerfield_value:
+			return
+
+		# Explicitly deactivated field (non-default)
+		if headerfield_value is None:
+			name_value_descr.append("%s=None" % headerfield_name)
+			return
+
+		if type(headerfield_value) in HEADER_TYPES_SIMPLE:
+			varname_convenient = "%s_s" % headerfield_name
+			varname_translated = "%s_t" % headerfield_name
+			found_alternative = False
+
+			# Add convenient OR translated description
+			if varname_convenient in varnames_in_layer:
+				value_convenient = getattr(layer, varname_convenient)
+				name_value_descr.append("%s=%r" % (varname_convenient, value_convenient))
+				found_alternative = True
+			elif varname_translated in varnames_in_layer:
+				# Derive imports from translated names (uses real python names)
+				val_translated, pmcv = getattr(layer, varname_translated)
+
+				if val_translated != "":
+					found_alternative = True
+					# x imports for one variable value
+					for pkgname, modname, clzname, varname in pmcv: # pylint: disable=unused-variable
+						package__imports[pkgname].add(modname)
+					"""
+					if headerfield_name == "flags":
+						logger.warning("%s -> %s", varname_translated, val_translated)
+					"""
+					# ..._t can't be assigned, don't use naming for output but standard varname
+					name_value_descr.append("%s=%s" % (headerfield_name, val_translated))
+				"""
+				# This may happen all the time (invalid values)
+				else:
+					logger.warning("Incomplete translation name: %s.%s=%r=0x%X" % (
+						layer.__class__.__qualname__, varname_translated, headerfield_value, headerfield_value)
+					)
+				"""
+			if not found_alternative:
+				name_value_descr.append("%s=%r" % (headerfield_name, headerfield_value))
+			# TODO: add sub-byte values? May become messy
+			# for name, subbyte_infos in self._headerfieldname__subbyteinfo.items()
+			# for prop, bstart, bstop, propname in subbyte_infos
+		else:
+			# Assume TriggerList
+			tl_descr = []
+
+			for tl_element in headerfield_value:
+				if type(tl_element) in TRIGGERLIST_TYPES_SIMPLE:
+					tl_descr.append(repr(tl_element))
+				else:
+					# Assume packet
+					package__imports_tl, layer_descr_tl = tl_element._get_repr()
+					#logger.debug("Imports for %s: %r" % (headerfield_value.__class__.__name__, package__imports_tl))
+
+					for import_mod_tl, import_sub_tl in package__imports_tl.items():
+						package__imports[import_mod_tl].update(import_sub_tl)
+
+					tl_descr.append(layer_descr_tl)
+
+			if len(tl_descr) > 0:
+				name_value_descr.append("\n%s=[\n%s]" % (headerfield_name, ",\t\n".join(tl_descr)))
+			else:
+				name_value_descr.append("%s=[%s]" % (headerfield_name, ", ".join(tl_descr)))
+
+	def _get_repr(self): # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+		"""
+		return -- {"pypacker.layerX.module": {"Classname", "VARNAME", ...}}, "Class(...)"
+		"""
+		layer_descr = []
+		package__imports = defaultdict(set)
+
+		for layer in self: # pylint: disable=too-many-nested-blocks
+			name_value_descr = []
+			varnames_in_layer = {*dir(layer)}
+			"""
+			if layer.__class__.__name__ == "TCP":
+				logger.warning("In TCP")
+			"""
+			# Fill descriptions in name_value_descr
+			for headerfield_name in layer._headerfield_names:
+				"""
+				if layer.__class__.__name__ == "TCP":
+					logger.warning("Checking headerfield_name %s" % headerfield_name)
+				"""
+				headerfield_value = getattr(layer, headerfield_name)
+
+				Packet._repr_collect_for_headerfield(
+					layer, headerfield_name, headerfield_value, name_value_descr, package__imports, varnames_in_layer)
+
+			"""
+			if "padding" in varnames_in_layer:
+				name_value_descr.append("padding=%r" % getattr(layer, "padding"))
+			"""
+
+			for hdrname_extra in layer._headerfield_names_extra:
+				hdrname_extra_val = getattr(layer, hdrname_extra)
+
+				if len(hdrname_extra_val) > 0:
+					name_value_descr.append("%s=%r" % (hdrname_extra, hdrname_extra_val))
+
+			if layer.higher_layer is None and len(layer.body_bytes) > 0:
+				name_value_descr.append("body_bytes=%r" % layer.body_bytes)
+
+			layer_qualname = layer.__class__.__qualname__
+			layer_descr.append("%s(%s)" % (layer_qualname, ", ".join(name_value_descr)))
+
+			layer_modulename = layer.__class__.__module__
+
+			if "__main__" not in layer_modulename:
+				# Add imports for package class, use explcicit class import instead of indirect via module name (more readable)
+				# eg from pypacker.layer3.ip import IP
+				package__imports[layer_modulename].add(layer_qualname.split(".")[0])
+			#logger.debug("package__imports: %r" % package__imports)
+
+		return package__imports, " +\\\n".join(layer_descr)
+
+	def _unpack(self):
+		"""
+		Unpack a full layer (set header field values) unpacked from cached header bytes (_header_cached).
+		This is only needed for Packet(b"somebytes").
+
+		NOTE:
+		- This is only called by the Packet class itself
+		- This is called prior to changing ANY header values
+		"""
+		#logger.debug("%r: unpacked=%r" % (self.__class__, self._unpacked))
+		if self._unpacked:
+			#logger.debug("Already unpacked")
+			return
+
+		# Needed to set here (and not at the end) to avoid recursive calls
+		self._unpacked = True
+		# Unpack is not triggered by changes to triggerlists -> Format may have changed
+		self._update_cached_header_format_and_tl_states()
+		#logger.debug("Unpacking %r: %r -> %r" % (self.__class__,
+		#	self._header_format_cached.format,
+		#	self._header_cached.tobytes() if type(self._header_cached) == memoryview else self._header_cached))
+		# This makes header values unshared
+		self._header_values = list(self._header_format_cached.unpack(self._header_cached))
+		self._header_values_shared = False
+
+	def reverse_address(self):
+		"""
+		Reverse source <-> destination address of THIS packet. This is at minimum
+		defined for: Ethernet, IP, TCP, UDP
+		"""
+
+	def reverse_all_address(self):
+		"""
+		Reverse source <-> destination address of EVERY packet upwards including this one
+		(reverse_address has to be implemented).
+		"""
+		current_hndl = self
+
+		while current_hndl is not None:
+			current_hndl.reverse_address()
+			current_hndl = current_hndl.higher_layer
+
+	def direction_all(self, other_packet):
+		"""
+		Check for direction on ALL layers from this one upwards.
+		This continues upwards until no body handler can be found anymore.
+		The extending class can overwrite direction() to implement an individual check,
+
+		other_packet -- Packet to be compared with this Packet
+		return -- Bitwise AND-concatination of all directions of ALL layers starting from
+			this one upwards. Directions are: [DIR_SAME | DIR_REV | DIR_UNKNOWN].
+			This can be checked via eg "direction_found & DIR_SAME"
+		"""
+		dir_ext = self.direction(other_packet)
+
+		try:
+			# Check upper layers and combine current result
+			# logger.debug("direction? checking next layer")
+			dir_upper = self.higher_layer.direction_all(other_packet.higher_layer)
+
+			return dir_ext & dir_upper
+		except AttributeError:
+			# One of both _higher_layer was None
+			# Example: TCP ACK (last step of handshake, no payload) <-> TCP ACK + Telnet
+			#logger.debug("AttributeError, direction: %d", dir_ext)
+			#logger.debug(e)
+			return dir_ext
+
+	def direction(self, other): # pylint: disable=unused-argument
+		"""
+		Check if this layer got a specific direction compared to "other". Can be overwritten.
+
+		return -- [DIR_SAME | DIR_REV | DIR_UNKNOWN | DIR_NOT_IMPLEMENTED]
+		"""
+		return Packet.DIR_NOT_IMPLEMENTED
+
+	def is_direction(self, packet2, direction):
+		"""
+		Same as "direction_all()" but using explicit direction to be checked.
+		As direction_all can be DIR_SAME and DIR_REV at the same time, this call
+		is more clearly.
+
+		packet2 -- packet to be compared to this packet
+		direction -- check for this direction (DIR_...)
+		return -- True if direction is found in this packet, False otherwise.
+		"""
+		#logger.debug("direction_all & direction = %d & %d", self.direction_all(packet2), direction)
+		return self.direction_all(packet2) & direction == direction
+
+	def _update_higherlayer_id(self):
+		"""
+		Updates the upperlayer id named by _id_fieldname (FIELD_FLAG_IS_TYPEFIELD was
+		set) based on the upperlayer class and simply assigning the associated id to that field.
+
+		Example: current layer = Ethernet, id field = type, body handler class = IP, eth.type
+		will be set to ETH_TYPE_IP.
+
+		If updating the type id is more complex than a simple assignmet this method has to
+		be overwritten.
+		"""
+		# Do nothing if one of:
+		# - type id field not known
+		# - body was not changed (bytes or handler must have been changed)
+		# - there is a higher layer (there must be a higher layer, not bytes)
+		# - type id field is active
+		if self._id_fieldname is None\
+			or not self._body_value_changed\
+			or self._higher_layer is None\
+			or not getattr(self, "%s_au_active" % self._id_fieldname):
+			return
+
+		# logger.debug("will update handler id, %s / %s / %s / %s",
+		#	self._id_fieldname,
+		#	getattr(self, "%s_au_active" % self._id_fieldname),
+		#	self._lazy_handler_data,
+		#	self._body_changed)
+		# Likely to succeed
+		try:
+			handler_clz = self._higher_layer.__class__
+			# Only set id if the upper layer class can be assoicated to this layer (eg Ethernet -> IP, not Ethernet -> TCP)
+			setattr(self,
+				self._id_fieldname,
+				Packet._handlerclass_id_dct[self.__class__][handler_clz])
+		except:
+			# No type id found, something like eth + Telnet
+			#logger.debug("no type id found for %s, class: %s -> %s" %
+			#	(self._higher_layer.__class__, self.__class__, handler_clz))
+			pass
+
+	def _update_fields(self):
+		"""
+		Overwrite this to update header fields.
+		Only gets called if this or any other upper layer has changed.
+		Callflow on a packet "pkt = layer1 + layer2 + layer3 -> pkt.bin()":
+		layer3._update_fields() -> layer2._update_fields() -> layer1._update_fields() ...
+		"""
+
+	def bin(self, update_auto_fields=True):
+		"""
+		Return this header and body (including all upper layers) as byte string
+		and reset changed-status.
+
+		update_auto_fields -- If True auto-update fields like checksums, else leave them be
+		"""
+		#logger.debug(self.__class__)
+		# Update all above already-instantiated layers if *something* has changed
+		if update_auto_fields and self._changed():
+			#logger.debug("Updating due to changes in %r" % str(self.__class__))
+			# Collect layers to be updated:
+			# Iterate update for A.B.C like C->B->A: A needs uptodate B and C,
+			# B needs uptodate C
+			layers = []
+			layer_it = self
+
+			while layer_it is not None:
+				layers.append(layer_it)
+				# Upper layer is not yet dissected but *could* need update.
+				# eg: IP:changed + TCP:notchanged/parsed -> TCP needs update
+				if layer_it._lazy_handler_data is not None:
+					# Next upper layer forces update in layer_it, eg IP->TCP (layer_it)
+					if layer_it._header_cached is None and\
+						layer_it._lazy_handler_data[0].__class__ in layer_it._update_dependants:
+						# Force dissecting
+						layer_it = layer_it.higher_layer
+					else:
+						layer_it = None
+				else:
+					layer_it = layer_it.higher_layer
+
+			# Start from the top
+			layers.reverse()
+
+			for layer in layers:
+				layer._update_fields()
+
+		header_tmp = self._pack_header(update_auto_fields=update_auto_fields)
+
+		if self._higher_layer is not None:
+			# Recursive call
+			# This should allow padding like "1 2 3 .... p2 p1"
+			bodybytes_tmp = self._higher_layer.bin(update_auto_fields=update_auto_fields)
+		else:
+			bodybytes_tmp = self._get_bodybytes()
+
+		#logger.debug("Body bytes: %r" % bodybytes_tmp)
+
+		# Now every layer got informed about our status, reset this layer
+		self._reset_changed()
+		return header_tmp + bodybytes_tmp
+
+	def _update_cached_header_format_and_tl_states(self, update_auto_fields=True):
+		"""
+		Update format of this packet header.
+		"""
+		#logger.debug(self.__class__)
+		#logger.debug("Formats: %s" % self._header_formats)
+		if self._header_format_cached is None: # pylint: disable=access-member-before-definition
+			if len(self._tlchanged) > 0:
+				# Update values and formats of tl in this packet
+				# _header_formats: should be already unshared (on/off, dynamic, tl init)
+				# _header_values: will be overwritten by _unpack after init,
+				# but that's ok (should be same value)
+				for name in self._tlchanged:
+					tlobj, idx = self._headername_tlobj[name]
+					# tl changed so calling to bin() is needed (instead of just __len__)
+					bts = tlobj.bin(update_auto_fields=update_auto_fields)
+					self._header_values[idx] = bts
+					self._header_formats[idx] = "%ds" % len(bts)
+
+				self._tlchanged.clear()
+
+			self._header_format_cached = Struct(">" + "".join(self._header_formats))
+
+	def _pack_header(self, update_auto_fields=True):
+		"""
+		Return header as byte string.
+		"""
+		#logger.debug(self.__class__)
+		if self._header_cached is not None:
+			# Return cached data if nothing changed
+			if type(self._header_cached) == memoryview:
+				self._header_cached = self._header_cached.tobytes()
+			#logger.warning("Returning cached header: %s" % self._header_cached)
+			return self._header_cached
+
+		# - Format may be None (value set)
+		# - Changes to header but not unpacked (only tl was accessed)
+		# -> update
+		self._update_cached_header_format_and_tl_states(update_auto_fields=update_auto_fields)
+		#logger.debug("%r: %r -> %r" % (self.__class__, self._header_format_cached.format, self._header_values))
+		try:
+			self._header_cached = self._header_format_cached.pack(*self._header_values)
+		except struct.error as ex:
+			# Exception decreases performance but helps significantly
+			logger.warning("Header contains wrongly assigned value types, check these:")
+			logger.warning(self._header_formats)
+			logger.warning(self._header_values)
+			logger.exception(ex)
+		return self._header_cached
+
+	# Readonly access to header
+	header_bytes = property(_pack_header)
+
+	def _changed(self):
+		"""
+		Check if this or any upper layer changed in header or body
+
+		return -- True if header or body changed, else False
+		"""
+		changed = False
+		p_instance = self
+
+		while p_instance is not None:
+			if p_instance._header_cached is None or p_instance._body_value_changed:
+				#logger.debug("Found change in %r" % p_instance.__class__)
+				changed = True
+				break
+
+			if p_instance._lazy_handler_data is None:
+				# One layer up, stop if next layer is not yet initiated which means: no change
+				p_instance = p_instance.higher_layer
+			else:
+				# Nothing changed upwards: lazy handler data still present/nothing got parsed
+				break
+		return changed
+
+	def _reset_changed(self):
+		"""Set the header/body changed-flag to False. This won't clear caches."""
+		self._body_value_changed = False
+		# "header_changed==true" = "_header_cached==None"
+
+	_header_value_changed = property(lambda obj: obj._header_cached is None)
+
+	def _add_change_listener(self, listener_cb):
+		"""
+		Add a new callback to be called on changes to header or body.
+
+		listener_cb -- the change listener to be added as callback-function
+		"""
+		if self._changelistener is None: # pylint: disable=access-member-before-definition
+			self._changelistener = {listener_cb}
+		else:
+			self._changelistener.add(listener_cb)
+
+	def _remove_change_listener(self):
+		"""
+		Remove all change listener.
+		"""
+		if self._changelistener is not None:
+			self._changelistener.clear()
+
+	def _notify_changelistener(self):
+		"""
+		Notify listener about changes in header or body using signature callback(self).
+		This is primarily meant for triggerlist to react
+		on changes in packets like Triggerlist[packet1, packet2, ...].
+		"""
+		# No listener added so far -> nothing to notify
+		if self._changelistener is None:
+			return
+
+		for listener_cb in self._changelistener:
+			listener_cb(self)
+
+	@classmethod
+	def load_handler(cls, clz_add, handler):
+		"""
+		Load Packet handler classes using a shared dictionary.
+
+		clz_add -- class for which handler has to be added
+		handler -- dict of handlers to be set like { id | (id1, id2, ...) : class }, id can be a tuple of values
+		"""
+		if clz_add not in Packet._id_handlerclass_dct:
+			Packet._id_handlerclass_dct[clz_add] = {}
+			Packet._handlerclass_id_dct[clz_add] = {}
+
+		for handler_id, packetclass in handler.items():
+			# pypacker.Packet.load_handler(IP, { ID : class } )
+			if type(handler_id) is not tuple:
+				Packet._id_handlerclass_dct[clz_add][handler_id] = packetclass
+				Packet._handlerclass_id_dct[clz_add][packetclass] = handler_id
+			else:
+				# logger.debug("Loading multi-ID handler: clz_add=%s, packetclass=%s, handler_id[0]=%s" %
+				#	(clz_add, packetclass, handler_id[0]))
+				# pypacker.Packet.load_handler(IP, { (ID1, ID2, ...) : class } )
+				for id_x in handler_id:
+					Packet._id_handlerclass_dct[clz_add][id_x] = packetclass
+				# Ambiguous relation of "handler class -> type ids", take 1st one
+				Packet._handlerclass_id_dct[clz_add][packetclass] = handler_id[0]
+
+	def hexdump(self, length=16, only_header=False):
+		"""
+		length -- Amount of bytes per line
+		only_header -- if True: just dump header, else header + body (default)
+
+		return -- Hexdump output string for this packet (header or header + body).
+		"""
+		bytepos = 0
+		res = []
+
+		if only_header:
+			buf = self._pack_header()
+		else:
+			buf = self.bin()
+		buflen = len(buf)
+
+		while bytepos < buflen:
+			line = buf[bytepos: bytepos + length]
+			hexa = " ".join(["%02x" % x for x in line])
+			# line = line.translate(__vis_filter)
+			line = re.sub(PROG_NONVISIBLE_CHARS, b".", line)
+			res.append("  %04d:      %-*s %s" % (bytepos, length * 3, hexa, line))
+			bytepos += length
+		return "\n".join(res)
+
+
+#
+# Utility functions
+# These could be put into separate modules but this would lead to recursive import problems.
+#
+# Avoid unneeded references for performance reasons
+randint = random.randint
+
+
+def byte2hex(buf):
+	"""Convert a bytestring to a hex-represenation:
+	b'1234' -> '\x31\x32\x33\x34'"""
+	return "\\x" + "\\x".join(["%02X" % x for x in buf])
+
+
+# MAC address
+def mac_str_to_bytes(mac_str):
+	"""Convert mac address AA:BB:CC:DD:EE:FF to byte representation."""
+	return b"".join([bytes.fromhex(x) for x in mac_str.split(":")])
+
+
+def mac_bytes_to_str(mac_bytes):
+	"""Convert mac address from byte representation to AA:BB:CC:DD:EE:FF."""
+	return "%02X:%02X:%02X:%02X:%02X:%02X" % unpack_mac(mac_bytes)
+
+
+def get_rnd_mac():
+	"""Create random mac address as bytestring"""
+	return pack_mac(randint(0, 255), randint(0, 255), randint(0, 255),
+		randint(0, 255), randint(0, 255), randint(0, 255))
+
+
+def get_property_mac(varname):
+	"""Create a get/set-property for a MAC address as string-representation."""
+	return property( # pylint: disable=unused-variable
+		lambda obj: mac_bytes_to_str(getattr(obj, varname)),
+		lambda obj, val: setattr(obj, varname, mac_str_to_bytes(val))
+	)
+
+
+# IPv4 address
+def ip4_str_to_bytes(ip_str):
+	"""Convert ip address 127.0.0.1 to byte representation."""
+	ips = [int(x) for x in ip_str.split(".")]
+	return pack_ipv4(ips[0], ips[1], ips[2], ips[3])
+
+
+def ip4_bytes_to_str(ip_bytes):
+	"""Convert ip address from byte representation to 127.0.0.1."""
+	return "%d.%d.%d.%d" % unpack_ipv4(ip_bytes)
+
+
+def get_rnd_ipv4():
+	"""Create random ipv4 adress as bytestring"""
+	return pack_ipv4(randint(0, 255), randint(0, 255), randint(0, 255), randint(0, 255))
+
+
+def get_property_ip4(var):
+	"""Create a get/set-property for an IP4 address as string-representation."""
+	return property( # pylint: disable=unused-variable
+		lambda obj: ip4_bytes_to_str(getattr(obj, var)),
+		lambda obj, val: setattr(obj, var, ip4_str_to_bytes(val))
+	)
+
+
+# IPv6 address
+def ip6_str_to_bytes(ip6_str):
+	"""Convert ip address 127.0.0.1 to byte representation."""
+	return v6_int_to_packed(int(IPv6Address(ip6_str)))
+
+
+def ip6_bytes_to_str(ip6_bytes):
+	"""Convert ip address from byte representation to 127.0.0.1."""
+	return str(IPv6Address(ip6_bytes))
+
+
+def get_property_ip6(var):
+	"""Create a get/set-property for an IP6 address as string-representation."""
+	return property(
+		lambda obj: ip6_bytes_to_str(getattr(obj, var)),
+		lambda obj, val: setattr(obj, var, ip6_str_to_bytes(val))
+	)
+
+
+def dns_tokenize_encoded_name(name):
+	"""
+	return -- [b"\\x04", ..., b"\\x00" |  b"\\xc???"], [b"test", ... ]
+	"""
+	# Contains terminating 0x00
+	# len(name_tokenized_lengths) - 1 = len(name_tokenized)
+	name_tokenized_lengths = []
+	name_tokenized = []
+	off = 0
+
+	while off < len(name):
+		length = name[off]
+
+		if length == 0:
+			name_tokenized_lengths.append(b"\x00")
+			break
+
+		if (length & 0b11000000) == 0:
+			# b"xxx" -> "xxx"
+			name_tokenized_lengths.append(name[off: off + 1])
+			name_tokenized.append(name[off + 1: off + 1 + length])
+			off += (1 + length)
+		else:
+			# DNS message compression, should be suffix/last element
+			name_tokenized_lengths.append(name[off: off + 2])
+			break
+	return name_tokenized_lengths, name_tokenized
+
+
+# DNS names
+def dns_name_decode(name, cb_mc_bytes=lambda: b""):
+	"""
+	DNS domain name decoder (bytes to string)
+
+	name -- example: b"\x03www\x07example\x03com\x00"
+	cb_bytes -- callback to get bytes used to find name in case of Message Compression
+		cb_bytes_pointer(): bytes
+	return -- example: "www.example.com"
+	"""
+	# ["www", "example", "com"]
+	name_decoded = []
+	parsed_pointers = set()
+	off = 1
+	#logger.debug("Decoding DNS: %r" % name)
+
+	while off < len(name):
+		size = name[off - 1]
+
+		if size == 0:
+			break
+
+		if (size & 0b11000000) == 0:
+			# b"xxx" -> "xxx"
+			name_decoded.append(name[off:off + size].decode())
+			off += size + 1
+		else:
+			# DNS message compression
+			off = (((name[off - 1] & 0b00111111) << 8) | name[off]) + 1
+			name = cb_mc_bytes()
+			#logger.debug("Found compression, off=%d, msg: %r" % (off, name))
+
+			if off in parsed_pointers:
+				# DNS message loop, abort...
+				#logger.debug("Msg loop, abort")
+				break
+			parsed_pointers.add(off)
+	#logger.debug("Returning: %r" % (".".join(name_decoded) + "."))
+	return ".".join(name_decoded)
+
+
+def dns_name_encode(name):
+	"""
+	DNS domain name encoder (string to bytes). Does not use compression:
+	'Programs are free to avoid using pointers in messages they generate,
+	although this will reduce datagram capacity, and may cause truncation.
+	However all programs are required to understand arriving messages that
+	contain pointers.' (RFC 1035)
+
+	name -- "www.example.com"
+	return -- b"\x03www\x07example\x03com\x00"
+	"""
+	name_encoded = [b""]
+	# "www" -> [b"www", ...]
+	labels = [part.encode() for part in name.split(".") if len(part) != 0]
+
+	for label in labels:
+		# b"www" -> "\x03www"
+		name_encoded.append(chr(len(label)).encode() + label)
+	return b"".join(name_encoded) + b"\x00"
+
+
+def compress_dns(name_bts, compress_ref_bts):
+	"""return -- Compressed name or None"""
+	name_tokenized_lengths, name_tokenized = dns_tokenize_encoded_name(name_bts)
+
+	if name_tokenized_lengths[-1][0] & 0xC0 == 0xC0:
+		# Already compressed
+		return None
+	name_part = [b"\x00"]
+	off_bts_found_last = -1
+	idx_last = -1
+
+	#logger.debug("Trying to compress %r" % name_bts)
+
+	for idx in range(len(name_tokenized) - 1, -1, -1):
+		name_part.insert(0, name_tokenized_lengths[idx] + name_tokenized[idx])
+		off_bts_found = compress_ref_bts.find(b"".join(name_part))
+
+		#logger.debug("Suffix search: idx=%r off_bts_found=%r name=%r" % (idx, off_bts_found, name_part))
+		if off_bts_found != -1:
+			#logger.debug("Found at off %r" % off_bts_found)
+			off_bts_found_last = off_bts_found
+			idx_last = idx
+		else:
+			break
+
+	if off_bts_found_last != -1:
+		prefix = []
+		for idx, len_bts__token_bts in enumerate(zip(name_tokenized_lengths, name_tokenized)):
+			#logger.debug("Prefix create: %r %r" % (idx, len_bts__token_bts))
+			if idx == idx_last:
+				break
+			prefix.append(b"".join(len_bts__token_bts))
+		return b"".join(prefix) + pack_H(0xC000 + off_bts_found_last)
+
+	# Nothing found = no compression
+	return None
+
+
+def get_property_dnsname(var, cb_mc_bytes=lambda obj: b""):
+	"""
+	Create a get/set-property for a DNS name.
+
+	cb_bytes -- callback to get bytes used to find name in case of Message Compression
+		cb_bytes_pointer(containing_obj) -- bytes
+	"""
+	return property(
+		lambda obj: dns_name_decode(getattr(obj, var),
+			cb_mc_bytes=lambda: cb_mc_bytes(obj)),
+		lambda obj, val: setattr(obj, var, dns_name_encode(val))
+	)
+
+
+def get_property_bytes_num_v1(var, format_target):
+	"""
+	Creates a get/set-property for "bytes (format Xs) <-> number" where len(bytes) is not 2**x.
+	Sometimes numbers aren't encoded as multiple of 2 (see SSL -> Handshake -> 3 bytes = integer???).
+	That's bad. How to convert between both representations? Well...
+	Note: only use w/ simple static fields
+
+	var -- varname to create a property for
+	format_target -- real format of the theader used to create a number.
+
+	Note: only use with static headers
+	"""
+	format_target_struct = Struct(format_target)
+	format_target_unpack = format_target_struct.unpack
+	format_target_pack = format_target_struct.pack
+	format_varname_s = ("_%s" % var) + "_format"
+
+	def get_formatlen_of_var(obj):
+		format_var_s = getattr(obj, format_varname_s)
+
+		if format_var_s is None:
+			#logger.warning("Got None format for %s, can't convert for convenience!", var)
+			return 0
+
+		return Struct(format_var_s).size
+
+	def get_val_bts_to_int(obj):
+		format_var_len = get_formatlen_of_var(obj)
+		prefix_bts = b"\x00" * (format_target_struct.size - format_var_len)
+		return format_target_unpack(prefix_bts + getattr(obj, var))[0]
+
+	def set_val_int_to_bts(obj, val):
+		format_var_len = get_formatlen_of_var(obj)
+		setattr(obj, var, format_target_pack(format_target, val)[: -format_var_len]) # pylint: disable=invalid-unary-operand-type
+
+	return property(
+		# bytes -> int
+		get_val_bts_to_int,
+		# int -> bytes
+		set_val_int_to_bts
+	)
+
+
+def bts_to_int(val):
+	prefix_bts = b"\x00" * (8 - len(val))
+	return unpack_Q(prefix_bts + val)[0]
+
+
+def int_to_bts(valint, bts_len):
+	return pack_Q(valint)[:-bts_len]
+
+
+def get_property_bytes_num(varname):
+	"""
+	Creates a get/set-property for "bytes (format Xs) <-> number".
+	Comes in handy where len(bytes) is not 2**x.
+
+	Note: only use w/ simple static fields
+	Note: max bytes length is 8
+	Note: field must be active
+
+	varname -- varname to create a property for
+	"""
+	varname = [varname]
+
+	def _bts_to_int(obj):
+		val_bts = getattr(obj, varname[0])
+
+		if val_bts is None:
+			return None
+
+		return bts_to_int(val_bts)
+
+	def _int_to_bts(obj, val_int):
+		val_bts_current = getattr(obj, varname[0])
+
+		if val_bts_current is None:
+			logger.warning("Field for autoconvert is inactive, activate it first!")
+			return
+
+		setattr(obj, varname[0], int_to_bts(val_int, len(val_bts_current)))
+
+	return property(
+		_bts_to_int,
+		_int_to_bts
+	)
+
+
+def get_property_translator(
+	varname,
+	varname_regex,
+	cb_create_descriptions=None,
+	cb_get_description=None,
+	classes_varvalues=None):
+	"""
+	Get a descriptor allowing to make a "value -> variable name representation" translation.
+	The variable name representation can actually be used to assign values to the field in question.
+	Example: ip.py -> contains IP_PROTO_UDP=17 -> ip1.p=ip.IP_PROTO_UDP
+		-> ip.p_t gives ("pypacker.layer3.ip", "", "IP_PROTO_UDP")
+
+	Call flow:
+	1) cb_create_descriptions -> cb_get_description
+
+	varname -- Variable name to translate, eg 1 -> "SOME_FLAG"
+	varname_regex -- The regex to find variable names
+	cb_create_descriptions: Descriptions for single values.
+		lambda: {value_raw : ("module", "classes", "varname")}
+	cb_get_description -- Allows final modifications of the description like "A | B"
+		lambda self, value, storage_object: "pypacker.layerX.module.[Class1.]varname | ...",
+			[("package", "module", "classes", "var"), ...]
+	classes_varvalues -- Classes containing variables to collect, None = module level (default)
+	return -- property allowing get-access to get an descriptive name
+	"""
+	if classes_varvalues is None:
+		classes_varvalues = [None]
+
+	if cb_create_descriptions is None:
+		#logger.debug("Setting default callback to create descriptions")
+		varnames_stack = inspect.stack()[1][0].f_globals
+		varname_pattern = re.compile(varname_regex)
+
+		def create_descriptions():
+			# Collect imports for access like: package.module0.class0[class1...].var
+			# from pypacker.layer0 import module0, ...
+			# ...
+			# val = module0.class0.var
+			value__pkg_mod_clz_var = {}
+			# pypacker.layer0.package0 -> pypacker, layer0, package0
+			package_module_l = varnames_stack["__name__"].split(".")
+			packagename, modname = ".".join(package_module_l[:-1]), package_module_l[-1]
+			#logger.debug("modname, packagename = %s, %s" % (modname, packagename))
+
+			for class_varvalues in classes_varvalues:
+				# Default is module level: package_module."".varname
+				classname = ""
+
+				if class_varvalues is None:
+					variables_name__value = varnames_stack
+				else:
+					classname = class_varvalues.__class__.__qualname__
+					variables_name__value = vars(class_varvalues)
+
+				for varname, varvalue in variables_name__value.items():
+					if type(varvalue) in VARFILTER_TYPES and varname_pattern.match(varname):
+						value__pkg_mod_clz_var[varvalue] = (packagename, modname, classname, varname)
+						"""
+						if "layer3" in packagename or "layer3" in modname or varname == "IP_PROTO_UDP":
+							logger.warning(value__pkg_mod_clz_var[varvalue])
+							logger.warning(package_module_l)
+						"""
+			return value__pkg_mod_clz_var
+
+		cb_create_descriptions = create_descriptions # pylint: disable=unnecessary-lambda-assignment
+
+	if cb_get_description is None:
+		def get_description_simple(_, value, value__pkg_mod_clz_var):
+			"""Create description for variable: (package, module, class, var) -> module.[class.]var"""
+			pkg_mod_clz_var_l = []
+			description_str = ""
+
+			if value in value__pkg_mod_clz_var:
+				pkg_mod_clz_var = value__pkg_mod_clz_var.get(value)
+				pkg_mod_clz_var_l.append(pkg_mod_clz_var)
+				description_str = ".".join(filter(None, pkg_mod_clz_var[1:]))
+
+			return description_str, pkg_mod_clz_var_l
+		cb_get_description = get_description_simple
+
+	value__pkg_mod_clz_var = LazyDict(cb_create_descriptions)
+
+	# Only get access
+	return property( # pylint: disable=unused-variable
+		lambda obj: cb_get_description(obj, getattr(obj, varname), value__pkg_mod_clz_var)
+	)
+
+
+def get_ondemand_property(varname, initval_cb):
+	"""
+	Creates a property whose value gets initialized ondemand.
+	This is meant as an alternative to an initialization in __init__
+	to decrease initial loading time
+	"""
+	varname_shadowed = "_%s" % varname
+
+	def get_var(self):
+		try:
+			# Likely to succeed
+			return getattr(self, varname_shadowed)
+		except:
+			val = initval_cb()
+			setattr(self, varname_shadowed, val)
+			return val
+
+	def set_var(self, value):
+		return setattr(self, varname_shadowed, value)
+
+	return property(get_var, set_var)
+
+####################################################################
+#
+#
+#           DSHELL O THROUGH P SCRIPTS END
+#
+###################################################################
+
+
+####################################################################
+#
+#
+#           DSHELL R SCRIPTS START
+#
+###################################################################
+
+
+"""Radiotap"""
+
+logger = logging.getLogger("pypacker")
+
+
+RTAP_TYPE_80211 = 0
+
+# Ref: http://www.radiotap.org
+# Fields Ref: http://www.radiotap.org/defined-fields/all
+
+# Defined flags ordered by appearance (little endian)
+TSFT_MASK		= 0x01000000
+FLAGS_MASK		= 0x02000000
+RATE_MASK		= 0x04000000
+CHANNEL_MASK		= 0x08000000
+
+FHSS_MASK		= 0x10000000
+DB_ANT_SIG_MASK		= 0x20000000
+DB_ANT_NOISE_MASK	= 0x40000000
+LOCK_QUAL_MASK		= 0x80000000
+
+TX_ATTN_MASK		= 0x00010000
+DB_TX_ATTN_MASK		= 0x00020000
+DBM_TX_POWER_MASK	= 0x00040000
+ANTENNA_MASK		= 0x00080000
+
+ANT_SIG_MASK		= 0x00100000
+ANT_NOISE_MASK		= 0x00200000
+RX_FLAGS_MASK		= 0x00400000
+TX_FLAGS_MASK		= 0x00800000
+
+DATA_RETRY_MASK		= 0x00000200
+MCS_INFO_MASK		= 0x00000800
+
+CHANNELPLUS_MASK	= 0x00000400
+HT_MASK			= 0x00000800
+
+AMPDU_MASK		= 0x00001000
+VHT_MASK		= 0x00002000
+
+# 7 bits reserved
+
+RT_NS_NEXT_MASK		= 0x00000020
+VENDOR_NS_NEXT		= 0x00000040
+EXT_MASK		= 0x00000080
+
+# mask -> (length, alignment)
+RADIO_FIELDS = {
+	TSFT_MASK: (8, 8),
+	FLAGS_MASK: (1, 1),
+	RATE_MASK: (1, 1),
+	# channel + flags
+	CHANNEL_MASK: (4, 2),
+
+	# fhss + pattern
+	FHSS_MASK: (2, 1),
+	DB_ANT_SIG_MASK: (1, 1),
+	DB_ANT_NOISE_MASK: (1, 1),
+	LOCK_QUAL_MASK: (2, 2),
+
+	TX_ATTN_MASK: (2, 2),
+	DB_TX_ATTN_MASK: (2, 2),
+	DBM_TX_POWER_MASK: (1, 1),
+	ANTENNA_MASK: (1, 1),
+
+	ANT_SIG_MASK: (1, 1),
+	ANT_NOISE_MASK: (1, 1),
+	RX_FLAGS_MASK: (2, 2),
+
+	TX_FLAGS_MASK: (2, 2),
+
+	DATA_RETRY_MASK: (1, 1),
+
+	MCS_INFO_MASK: (3, 1),
+	# CHANNELPLUS_MASK	:,
+	HT_MASK: (3, 1),
+
+	AMPDU_MASK: (8, 4),
+	VHT_MASK: (12, 2)
+
+	# RT_NS_NEXT_MASK	:,
+	# VENDOR_NS_NEXT	:,
+	# EXT_MASK		:
+}
+
+RADIO_FIELDS_MASKS = [
+	TSFT_MASK,
+	FLAGS_MASK,
+	RATE_MASK,
+	# channel + flags
+	CHANNEL_MASK,
+
+	# fhss + pattern
+	FHSS_MASK,
+	DB_ANT_SIG_MASK,
+	DB_ANT_NOISE_MASK,
+	LOCK_QUAL_MASK,
+
+	TX_ATTN_MASK,
+	DB_TX_ATTN_MASK,
+	DBM_TX_POWER_MASK,
+	ANTENNA_MASK,
+
+	ANT_SIG_MASK,
+	ANT_NOISE_MASK,
+	RX_FLAGS_MASK,
+	TX_FLAGS_MASK,
+
+	DATA_RETRY_MASK,
+	MCS_INFO_MASK,
+
+	HT_MASK,
+
+	AMPDU_MASK,
+	VHT_MASK
+]
+
+
+def get_channelinfo(channel_bytes):
+	"""
+	return -- [channel_mhz, channel_flags]
+	"""
+	return [unpack_H_le(channel_bytes[0:2])[0], unpack_H_le(channel_bytes[2:4])[0]]
+
+
+def freq_to_channel(freq):
+	"""
+	freq -- frequqncy in Hz
+	return -- channel number
+	"""
+	if 2412000000 <= freq <= 2472000000:
+		return 1 + int((freq - 2412000000) / (5 * 1000000))
+	if freq == 2484000000:
+		return 14
+	if 5035000000 <= freq <= 5825000000:
+		return 7 + int((freq - 5035000000) / (5 * 1000000))
+	return None
+
+
+def channel_to_freq(channel):
+	"""
+	freq -- frequqncy in Hz
+	return -- channel number
+	"""
+	if 1 <= channel <= 13:
+		return 2407000000 + channel * 5 * 1000000
+	if channel == 14:
+		return 2484000000
+	if channel >= 15:
+		return 5035000000 + (channel - 7) * 5 * 1000000
+	return None
+
+
+class Radiotap(pypacker.Packet):
+	class FlagTriggerList(triggerlist.TriggerList):
+		# no __init__ needed: we just add tuples
+		def _pack(self, tuple_entry):
+			#return b"".join([flag[1] for flag in self])
+			return tuple_entry[1]
+
+	__hdr__ = (
+		("version", "B", 0),
+		("pad", "B", 0),
+		("len", "H", 0x0800),
+		("present_flags", "I", 0),
+		("flags", None, FlagTriggerList),  # stores: (XXX_MASK, value)
+		[("fcs", b"")]
+	)
+
+	__handler__ = {
+		RTAP_TYPE_80211: ieee80211.IEEE80211
+	}
+
+	def _get_channel(self):
+		return self.flags[lambda v: v[0] == CHANNEL_MASK][0][1][1]
+
+	def _set_channel(self, channel):
+		freq = int(channel_to_freq(channel) / 1000000)
+		self.flags[lambda v: v[0] == CHANNEL_MASK] = (CHANNEL_MASK, pack_H_le(freq))
+
+	# get/set channel, set frequency under the hood
+	channel = property(_get_channel, _set_channel)
+
+	"""
+	def _get_present_flags_be(self):
+		return unpack_I(pack_I_le(self.present_flags))[0]
+
+	def _set_present_flags_be(self, present_flags_be):
+		self.present_flags = unpack_I_le(pack_I(present_flags_be))[0]
+
+	present_flags_be = property(_get_present_flags_be, _set_present_flags_be)
+	"""
+
+	def _get_signal_strength(self):
+		"""return -- Signal strength in dB or None"""
+		sig = self.flags[lambda v: v[0] == DB_ANT_SIG_MASK][0][1][1]
+
+		if sig is not None:
+			return int.from_bytes(sig[1], byteorder="big", signed=True)
+
+		return sig
+
+	signal_strength = property(_get_signal_strength)
+
+	def _dissect(self, buf):
+		present_flags = unpack_I(buf[4:8])[0]
+		#logger.debug("Flags: 0x%X" % flags)
+		pos_end = len(buf)
+
+		# Check for FSC, needs to be skipped for upper layers
+		if present_flags & FLAGS_MASK == FLAGS_MASK:
+			#logger.debug("Flags mask matched")
+			flags_off = 8
+			# TSFT present -> Flags values are after TSFT value
+			if present_flags & TSFT_MASK == TSFT_MASK:
+				flags_off = 8 + 8
+			if buf[flags_off] & 0x10 != 0:
+				#logger.debug("FCS found")
+				self.fcs = buf[-4:].tobytes()
+				pos_end = -4
+
+		hdr_len = unpack_H_le(buf[2:4])[0]
+		self.flags(buf[8: hdr_len], self._parse_flags)
+		# Now we got the correct header length
+		#logger.debug("hlen=%r, buf=%r" % (hdr_len, buf[hdr_len: pos_end]))
+		return hdr_len, RTAP_TYPE_80211, buf[hdr_len: pos_end]
+
+	def _parse_flags(self, buf):
+		off = 0
+		flags = []
+
+		# Assume order of flags is correctly stated by "present_flags"
+		# We need to know if fcs is present: minimum TSFT and flags must get parsed
+		for mask in RADIO_FIELDS_MASKS:
+			# flag not set
+			if mask & self.present_flags == 0:
+				continue
+
+			size, align = RADIO_FIELDS[mask]
+
+			# Check alignment
+			mod = off % align
+
+			if mod != 0:
+				# Enlarge size by alignment
+				size += (align - mod)
+
+			#logger.debug("Got flag %02X, length/align: %r" % (mask, size_align))
+			# Add all fields for the stated flag
+			value = buf[off: off + size].tobytes()
+
+			# FCS present?
+			# if mask == FLAGS_MASK and unpack_B(value)[0] & 0x10 != 0:
+			#	# logger.debug("fcs found")
+			#	fcs_present = True
+
+			#logger.debug("adding flag: %s" % str(mask))
+			flags.append((mask, value))
+			off += size
+		return flags
+
+	def bin(self, update_auto_fields=True):
+		"""Custom bin(): handle FCS."""
+		return pypacker.Packet.bin(self, update_auto_fields=update_auto_fields) + self.fcs
+
+
+"""
+PRNG management routines, thin wrappers.
+"""
+
+
+warnings.warn(
+    "OpenSSL.rand is deprecated - you should use os.urandom instead",
+    DeprecationWarning,
+    stacklevel=3,
+)
+
+
+def add(buffer: bytes, entropy: int) -> None:
+    """
+    Mix bytes from *string* into the PRNG state.
+
+    The *entropy* argument is (the lower bound of) an estimate of how much
+    randomness is contained in *string*, measured in bytes.
+
+    For more information, see e.g. :rfc:`1750`.
+
+    This function is only relevant if you are forking Python processes and
+    need to reseed the CSPRNG after fork.
+
+    :param buffer: Buffer with random data.
+    :param entropy: The entropy (in bytes) measurement of the buffer.
+
+    :return: :obj:`None`
+    """
+    if not isinstance(buffer, bytes):
+        raise TypeError("buffer must be a byte string")
+
+    if not isinstance(entropy, int):
+        raise TypeError("entropy must be an integer")
+
+    _lib.RAND_add(buffer, len(buffer), entropy)
+
+
+def status() -> int:
+    """
+    Check whether the PRNG has been seeded with enough data.
+
+    :return: 1 if the PRNG is seeded enough, 0 otherwise.
+    """
+    return _lib.RAND_status()
+
+"""
+
+Records
+=======
+
+"""
+
+
+class Record(SimpleEquality, metaclass=ABCMeta):
+    """All records are subclasses of the abstract class ``Record``."""
+
+    def __repr__(self) -> str:
+        args = ", ".join(f"{k}={v!r}" for k, v in self.__dict__.items())
+        return f"{self.__module__}.{self.__class__.__name__}({args})"
+
+
+class PlaceRecord(Record, metaclass=ABCMeta):
+    """All records with :py:attr:`names` subclass :py:class:`PlaceRecord`."""
+
+    names: Dict[str, str]
+    _locales: List[str]
+
+    def __init__(
+        self,
+        locales: Optional[List[str]] = None,
+        names: Optional[Dict[str, str]] = None,
+    ) -> None:
+        if locales is None:
+            locales = ["en"]
+        self._locales = locales
+        if names is None:
+            names = {}
+        self.names = names
+
+    @property
+    def name(self) -> Optional[str]:
+        """Dict with locale codes as keys and localized name as value."""
+        # pylint:disable=E1101
+        return next((self.names.get(x) for x in self._locales if x in self.names), None)
+
+
+class City(PlaceRecord):
+    """Contains data for the city record associated with an IP address.
+
+    This class contains the city-level data associated with an IP address.
+
+    This record is returned by ``city``, ``enterprise``, and ``insights``.
+
+    Attributes:
+
+    .. attribute:: confidence
+
+      A value from 0-100 indicating MaxMind's
+      confidence that the city is correct. This attribute is only available
+      from the Insights end point and the Enterprise database.
+
+      :type: int
+
+    .. attribute:: geoname_id
+
+      The GeoName ID for the city.
+
+      :type: int
+
+    .. attribute:: name
+
+      The name of the city based on the locales list passed to the
+      constructor.
+
+      :type: str
+
+    .. attribute:: names
+
+      A dictionary where the keys are locale codes
+      and the values are names.
+
+      :type: dict
+
+    """
+
+    confidence: Optional[int]
+    geoname_id: Optional[int]
+
+    def __init__(
+        self,
+        locales: Optional[List[str]] = None,
+        confidence: Optional[int] = None,
+        geoname_id: Optional[int] = None,
+        names: Optional[Dict[str, str]] = None,
+        **_,
+    ) -> None:
+        self.confidence = confidence
+        self.geoname_id = geoname_id
+        super().__init__(locales, names)
+
+
+class Continent(PlaceRecord):
+    """Contains data for the continent record associated with an IP address.
+
+    This class contains the continent-level data associated with an IP
+    address.
+
+    Attributes:
+
+
+    .. attribute:: code
+
+      A two character continent code like "NA" (North America)
+      or "OC" (Oceania).
+
+      :type: str
+
+    .. attribute:: geoname_id
+
+      The GeoName ID for the continent.
+
+      :type: int
+
+    .. attribute:: name
+
+      Returns the name of the continent based on the locales list passed to
+      the constructor.
+
+      :type: str
+
+    .. attribute:: names
+
+      A dictionary where the keys are locale codes
+      and the values are names.
+
+      :type: dict
+
+    """
+
+    code: Optional[str]
+    geoname_id: Optional[int]
+
+    def __init__(
+        self,
+        locales: Optional[List[str]] = None,
+        code: Optional[str] = None,
+        geoname_id: Optional[int] = None,
+        names: Optional[Dict[str, str]] = None,
+        **_,
+    ) -> None:
+        self.code = code
+        self.geoname_id = geoname_id
+        super().__init__(locales, names)
+
+
+class Country(PlaceRecord):
+    """Contains data for the country record associated with an IP address.
+
+    This class contains the country-level data associated with an IP address.
+
+    Attributes:
+
+
+    .. attribute:: confidence
+
+      A value from 0-100 indicating MaxMind's confidence that
+      the country is correct. This attribute is only available from the
+      Insights end point and the Enterprise database.
+
+      :type: int
+
+    .. attribute:: geoname_id
+
+      The GeoName ID for the country.
+
+      :type: int
+
+    .. attribute:: is_in_european_union
+
+      This is true if the country is a member state of the European Union.
+
+      :type: bool
+
+    .. attribute:: iso_code
+
+      The two-character `ISO 3166-1
+      <https://en.wikipedia.org/wiki/ISO_3166-1>`_ alpha code for the
+      country.
+
+      :type: str
+
+    .. attribute:: name
+
+      The name of the country based on the locales list passed to the
+      constructor.
+
+      :type: str
+
+    .. attribute:: names
+
+      A dictionary where the keys are locale codes and the values
+      are names.
+
+      :type: dict
+
+    """
+
+    confidence: Optional[int]
+    geoname_id: Optional[int]
+    is_in_european_union: bool
+    iso_code: Optional[str]
+
+    def __init__(
+        self,
+        locales: Optional[List[str]] = None,
+        confidence: Optional[int] = None,
+        geoname_id: Optional[int] = None,
+        is_in_european_union: bool = False,
+        iso_code: Optional[str] = None,
+        names: Optional[Dict[str, str]] = None,
+        **_,
+    ) -> None:
+        self.confidence = confidence
+        self.geoname_id = geoname_id
+        self.is_in_european_union = is_in_european_union
+        self.iso_code = iso_code
+        super().__init__(locales, names)
+
+
+class RepresentedCountry(Country):
+    """Contains data for the represented country associated with an IP address.
+
+    This class contains the country-level data associated with an IP address
+    for the IP's represented country. The represented country is the country
+    represented by something like a military base.
+
+    Attributes:
+
+
+    .. attribute:: confidence
+
+      A value from 0-100 indicating MaxMind's confidence that
+      the country is correct. This attribute is only available from the
+      Insights end point and the Enterprise database.
+
+      :type: int
+
+    .. attribute:: geoname_id
+
+      The GeoName ID for the country.
+
+      :type: int
+
+    .. attribute:: is_in_european_union
+
+      This is true if the country is a member state of the European Union.
+
+      :type: bool
+
+    .. attribute:: iso_code
+
+      The two-character `ISO 3166-1
+      <https://en.wikipedia.org/wiki/ISO_3166-1>`_ alpha code for the country.
+
+      :type: str
+
+    .. attribute:: name
+
+      The name of the country based on the locales list passed to the
+      constructor.
+
+      :type: str
+
+    .. attribute:: names
+
+      A dictionary where the keys are locale codes and the values
+      are names.
+
+      :type: dict
+
+
+    .. attribute:: type
+
+      A string indicating the type of entity that is representing the
+      country. Currently we only return ``military`` but this could expand to
+      include other types in the future.
+
+      :type: str
+
+    """
+
+    type: Optional[str]
+
+    def __init__(
+        self,
+        locales: Optional[List[str]] = None,
+        confidence: Optional[int] = None,
+        geoname_id: Optional[int] = None,
+        is_in_european_union: bool = False,
+        iso_code: Optional[str] = None,
+        names: Optional[Dict[str, str]] = None,
+        # pylint:disable=redefined-builtin
+        type: Optional[str] = None,
+        **_,
+    ) -> None:
+        self.type = type
+        super().__init__(
+            locales, confidence, geoname_id, is_in_european_union, iso_code, names
+        )
+
+
+class Location(Record):
+    """Contains data for the location record associated with an IP address.
+
+    This class contains the location data associated with an IP address.
+
+    This record is returned by ``city``, ``enterprise``, and ``insights``.
+
+    Attributes:
+
+    .. attribute:: average_income
+
+      The average income in US dollars associated with the requested IP
+      address. This attribute is only available from the Insights end point.
+
+      :type: int
+
+    .. attribute:: accuracy_radius
+
+      The approximate accuracy radius in kilometers around the latitude and
+      longitude for the IP address. This is the radius where we have a 67%
+      confidence that the device using the IP address resides within the
+      circle centered at the latitude and longitude with the provided radius.
+
+      :type: int
+
+    .. attribute:: latitude
+
+      The approximate latitude of the location associated with the IP
+      address. This value is not precise and should not be used to identify a
+      particular address or household.
+
+      :type: float
+
+    .. attribute:: longitude
+
+      The approximate longitude of the location associated with the IP
+      address. This value is not precise and should not be used to identify a
+      particular address or household.
+
+      :type: float
+
+    .. attribute:: metro_code
+
+      The metro code of the location if the
+      location is in the US. MaxMind returns the same metro codes as the
+      `Google AdWords API
+      <https://developers.google.com/adwords/api/docs/appendix/cities-DMAregions>`_.
+
+      :type: int
+
+      .. attribute:: population_density
+
+      The estimated population per square kilometer associated with the IP
+      address. This attribute is only available from the Insights end point.
+
+      :type: int
+
+    .. attribute:: time_zone
+
+      The time zone associated with location, as specified by the `IANA Time
+      Zone Database <https://www.iana.org/time-zones>`_, e.g.,
+      "America/New_York".
+
+      :type: str
+
+    """
+
+    average_income: Optional[int]
+    accuracy_radius: Optional[int]
+    latitude: Optional[float]
+    longitude: Optional[float]
+    metro_code: Optional[int]
+    population_density: Optional[int]
+    time_zone: Optional[str]
+
+    def __init__(
+        self,
+        average_income: Optional[int] = None,
+        accuracy_radius: Optional[int] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+        metro_code: Optional[int] = None,
+        population_density: Optional[int] = None,
+        time_zone: Optional[str] = None,
+        **_,
+    ) -> None:
+        self.average_income = average_income
+        self.accuracy_radius = accuracy_radius
+        self.latitude = latitude
+        self.longitude = longitude
+        self.metro_code = metro_code
+        self.population_density = population_density
+        self.time_zone = time_zone
+
+
+class MaxMind(Record):
+    """Contains data related to your MaxMind account.
+
+    Attributes:
+
+    .. attribute:: queries_remaining
+
+      The number of remaining queries you have
+      for the end point you are calling.
+
+      :type: int
+
+    """
+
+    queries_remaining: Optional[int]
+
+    def __init__(self, queries_remaining: Optional[int] = None, **_) -> None:
+        self.queries_remaining = queries_remaining
+
+
+class Postal(Record):
+    """Contains data for the postal record associated with an IP address.
+
+    This class contains the postal data associated with an IP address.
+
+    This attribute is returned by ``city``, ``enterprise``, and ``insights``.
+
+    Attributes:
+
+    .. attribute:: code
+
+      The postal code of the location. Postal
+      codes are not available for all countries. In some countries, this will
+      only contain part of the postal code.
+
+      :type: str
+
+    .. attribute:: confidence
+
+      A value from 0-100 indicating
+      MaxMind's confidence that the postal code is correct. This attribute is
+      only available from the Insights end point and the Enterprise database.
+
+      :type: int
+
+    """
+
+    code: Optional[str]
+    confidence: Optional[int]
+
+    def __init__(
+        self, code: Optional[str] = None, confidence: Optional[int] = None, **_
+    ) -> None:
+        self.code = code
+        self.confidence = confidence
+
+
+class Subdivision(PlaceRecord):
+    """Contains data for the subdivisions associated with an IP address.
+
+    This class contains the subdivision data associated with an IP address.
+
+    This attribute is returned by ``city``, ``enterprise``, and ``insights``.
+
+    Attributes:
+
+    .. attribute:: confidence
+
+      This is a value from 0-100 indicating MaxMind's
+      confidence that the subdivision is correct. This attribute is only
+      available from the Insights end point and the Enterprise database.
+
+      :type: int
+
+    .. attribute:: geoname_id
+
+      This is a GeoName ID for the subdivision.
+
+      :type: int
+
+    .. attribute:: iso_code
+
+      This is a string up to three characters long
+      contain the subdivision portion of the `ISO 3166-2 code
+      <https://en.wikipedia.org/wiki/ISO_3166-2>`_.
+
+      :type: str
+
+    .. attribute:: name
+
+      The name of the subdivision based on the locales list passed to the
+      constructor.
+
+      :type: str
+
+    .. attribute:: names
+
+      A dictionary where the keys are locale codes and the
+      values are names
+
+      :type: dict
+
+    """
+
+    confidence: Optional[int]
+    geoname_id: Optional[int]
+    iso_code: Optional[str]
+
+    def __init__(
+        self,
+        locales: Optional[List[str]] = None,
+        confidence: Optional[int] = None,
+        geoname_id: Optional[int] = None,
+        iso_code: Optional[str] = None,
+        names: Optional[Dict[str, str]] = None,
+        **_,
+    ) -> None:
+        self.confidence = confidence
+        self.geoname_id = geoname_id
+        self.iso_code = iso_code
+        super().__init__(locales, names)
+
+
+class Subdivisions(tuple):
+    """A tuple-like collection of subdivisions associated with an IP address.
+
+    This class contains the subdivisions of the country associated with the
+    IP address from largest to smallest.
+
+    For instance, the response for Oxford in the United Kingdom would have
+    England as the first element and Oxfordshire as the second element.
+
+    This attribute is returned by ``city``, ``enterprise``, and ``insights``.
+    """
+
+    def __new__(
+        cls: Type["Subdivisions"], locales: Optional[List[str]], *subdivisions
+    ) -> "Subdivisions":
+        subobjs = tuple(Subdivision(locales, **x) for x in subdivisions)
+        obj = super().__new__(cls, subobjs)  # type: ignore
+        return obj
+
+    def __init__(
+        self, locales: Optional[List[str]], *subdivisions  # pylint:disable=W0613
+    ) -> None:
+        self._locales = locales
+        super().__init__()
+
+    @property
+    def most_specific(self) -> Subdivision:
+        """The most specific (smallest) subdivision available.
+
+        If there are no :py:class:`Subdivision` objects for the response,
+        this returns an empty :py:class:`Subdivision`.
+
+        :type: :py:class:`Subdivision`
+        """
+        try:
+            return self[-1]
+        except IndexError:
+            return Subdivision(self._locales)
+
+
+class Traits(Record):
+    """Contains data for the traits record associated with an IP address.
+
+    This class contains the traits data associated with an IP address.
+
+    This class has the following attributes:
+
+
+    .. attribute:: autonomous_system_number
+
+      The `autonomous system
+      number <https://en.wikipedia.org/wiki/Autonomous_system_(Internet)>`_
+      associated with the IP address. This attribute is only available from
+      the City Plus and Insights web services and the Enterprise database.
+
+      :type: int
+
+    .. attribute:: autonomous_system_organization
+
+      The organization associated with the registered `autonomous system
+      number <https://en.wikipedia.org/wiki/Autonomous_system_(Internet)>`_ for
+      the IP address. This attribute is only available from the City Plus and
+      Insights web service end points and the Enterprise database.
+
+      :type: str
+
+    .. attribute:: connection_type
+
+      The connection type may take the following values:
+
+      - Dialup
+      - Cable/DSL
+      - Corporate
+      - Cellular
+      - Satellite
+
+      Additional values may be added in the future.
+
+      This attribute is only available from the City Plus and Insights web
+      service end points and the Enterprise database.
+
+      :type: str
+
+    .. attribute:: domain
+
+      The second level domain associated with the
+      IP address. This will be something like "example.com" or
+      "example.co.uk", not "foo.example.com". This attribute is only available
+      from the City Plus and Insights web service end points and the
+      Enterprise database.
+
+      :type: str
+
+    .. attribute:: ip_address
+
+      The IP address that the data in the model
+      is for. If you performed a "me" lookup against the web service, this
+      will be the externally routable IP address for the system the code is
+      running on. If the system is behind a NAT, this may differ from the IP
+      address locally assigned to it.
+
+      :type: str
+
+    .. attribute:: is_anonymous
+
+      This is true if the IP address belongs to any sort of anonymous network.
+      This attribute is only available from Insights.
+
+      :type: bool
+
+    .. attribute:: is_anonymous_proxy
+
+      This is true if the IP is an anonymous proxy.
+
+      :type: bool
+
+      .. deprecated:: 2.2.0
+        Use our our `GeoIP2 Anonymous IP database
+        <https://www.maxmind.com/en/geoip2-anonymous-ip-database GeoIP2>`_
+        instead.
+
+    .. attribute:: is_anonymous_vpn
+
+      This is true if the IP address is registered to an anonymous VPN
+      provider.
+
+      If a VPN provider does not register subnets under names associated with
+      them, we will likely only flag their IP ranges using the
+      ``is_hosting_provider`` attribute.
+
+      This attribute is only available from Insights.
+
+      :type: bool
+
+    .. attribute:: is_anycast
+
+      This returns true if the IP address belongs to an
+      `anycast network <https://en.wikipedia.org/wiki/Anycast>`_.
+      This is available for the GeoIP2 Country, City Plus, and Insights
+      web services and the GeoIP2 Country, City, and Enterprise databases.
+
+      :type: bool
+
+    .. attribute:: is_hosting_provider
+
+      This is true if the IP address belongs to a hosting or VPN provider
+      (see description of ``is_anonymous_vpn`` attribute).
+      This attribute is only available from Insights.
+
+      :type: bool
+
+    .. attribute:: is_legitimate_proxy
+
+      This attribute is true if MaxMind believes this IP address to be a
+      legitimate proxy, such as an internal VPN used by a corporation. This
+      attribute is only available in the Enterprise database.
+
+      :type: bool
+
+    .. attribute:: is_public_proxy
+
+      This is true if the IP address belongs to a public proxy. This attribute
+      is only available from Insights.
+
+      :type: bool
+
+    .. attribute:: is_residential_proxy
+
+      This is true if the IP address is on a suspected anonymizing network
+      and belongs to a residential ISP. This attribute is only available from
+      Insights.
+
+      :type: bool
+
+
+    .. attribute:: is_satellite_provider
+
+      This is true if the IP address is from a satellite provider that
+      provides service to multiple countries.
+
+      :type: bool
+
+      .. deprecated:: 2.2.0
+        Due to the increased coverage by mobile carriers, very few
+        satellite providers now serve multiple countries. As a result, the
+        output does not provide sufficiently relevant data for us to maintain
+        it.
+
+    .. attribute:: is_tor_exit_node
+
+      This is true if the IP address is a Tor exit node. This attribute is
+      only available from Insights.
+
+      :type: bool
+
+    .. attribute:: isp
+
+      The name of the ISP associated with the IP address. This attribute is
+      only available from the City Plus and Insights web services and the
+      Enterprise database.
+
+      :type: str
+
+    .. attribute: mobile_country_code
+
+      The `mobile country code (MCC)
+      <https://en.wikipedia.org/wiki/Mobile_country_code>`_ associated with the
+      IP address and ISP. This attribute is available from the City Plus and
+      Insights web services and the Enterprise database.
+
+      :type: str
+
+    .. attribute: mobile_network_code
+
+      The `mobile network code (MNC)
+      <https://en.wikipedia.org/wiki/Mobile_country_code>`_ associated with the
+      IP address and ISP. This attribute is available from the City Plus and
+      Insights web services and the Enterprise database.
+
+      :type: str
+
+    .. attribute:: network
+
+      The network associated with the record. In particular, this is the
+      largest network where all of the fields besides ip_address have the same
+      value.
+
+      :type: ipaddress.IPv4Network or ipaddress.IPv6Network
+
+    .. attribute:: organization
+
+      The name of the organization associated with the IP address. This
+      attribute is only available from the City Plus and Insights web services
+      and the Enterprise database.
+
+      :type: str
+
+    .. attribute:: static_ip_score
+
+      An indicator of how static or dynamic an IP address is. The value ranges
+      from 0 to 99.99 with higher values meaning a greater static association.
+      For example, many IP addresses with a user_type of cellular have a
+      lifetime under one. Static Cable/DSL IPs typically have a lifetime above
+      thirty.
+
+      This indicator can be useful for deciding whether an IP address represents
+      the same user over time. This attribute is only available from
+      Insights.
+
+      :type: float
+
+    .. attribute:: user_count
+
+      The estimated number of users sharing the IP/network during the past 24
+      hours. For IPv4, the count is for the individual IP. For IPv6, the count
+      is for the /64 network. This attribute is only available from
+      Insights.
+
+      :type: int
+
+    .. attribute:: user_type
+
+      The user type associated with the IP
+      address. This can be one of the following values:
+
+      * business
+      * cafe
+      * cellular
+      * college
+      * consumer_privacy_network
+      * content_delivery_network
+      * dialup
+      * government
+      * hosting
+      * library
+      * military
+      * residential
+      * router
+      * school
+      * search_engine_spider
+      * traveler
+
+      This attribute is only available from the Insights end point and the
+      Enterprise database.
+
+      :type: str
+
+    """
+
+    autonomous_system_number: Optional[int]
+    autonomous_system_organization: Optional[str]
+    connection_type: Optional[str]
+    domain: Optional[str]
+    ip_address: Optional[str]
+    is_anonymous: bool
+    is_anonymous_proxy: bool
+    is_anonymous_vpn: bool
+    is_anycast: bool
+    is_hosting_provider: bool
+    is_legitimate_proxy: bool
+    is_public_proxy: bool
+    is_residential_proxy: bool
+    is_satellite_provider: bool
+    is_tor_exit_node: bool
+    isp: Optional[str]
+    mobile_country_code: Optional[str]
+    mobile_network_code: Optional[str]
+    organization: Optional[str]
+    static_ip_score: Optional[float]
+    user_count: Optional[int]
+    user_type: Optional[str]
+    _network: Optional[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]]
+    _prefix_len: Optional[int]
+
+    def __init__(
+        self,
+        autonomous_system_number: Optional[int] = None,
+        autonomous_system_organization: Optional[str] = None,
+        connection_type: Optional[str] = None,
+        domain: Optional[str] = None,
+        is_anonymous: bool = False,
+        is_anonymous_proxy: bool = False,
+        is_anonymous_vpn: bool = False,
+        is_hosting_provider: bool = False,
+        is_legitimate_proxy: bool = False,
+        is_public_proxy: bool = False,
+        is_residential_proxy: bool = False,
+        is_satellite_provider: bool = False,
+        is_tor_exit_node: bool = False,
+        isp: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        network: Optional[str] = None,
+        organization: Optional[str] = None,
+        prefix_len: Optional[int] = None,
+        static_ip_score: Optional[float] = None,
+        user_count: Optional[int] = None,
+        user_type: Optional[str] = None,
+        mobile_country_code: Optional[str] = None,
+        mobile_network_code: Optional[str] = None,
+        is_anycast: bool = False,
+        **_,
+    ) -> None:
+        self.autonomous_system_number = autonomous_system_number
+        self.autonomous_system_organization = autonomous_system_organization
+        self.connection_type = connection_type
+        self.domain = domain
+        self.is_anonymous = is_anonymous
+        self.is_anonymous_proxy = is_anonymous_proxy
+        self.is_anonymous_vpn = is_anonymous_vpn
+        self.is_anycast = is_anycast
+        self.is_hosting_provider = is_hosting_provider
+        self.is_legitimate_proxy = is_legitimate_proxy
+        self.is_public_proxy = is_public_proxy
+        self.is_residential_proxy = is_residential_proxy
+        self.is_satellite_provider = is_satellite_provider
+        self.is_tor_exit_node = is_tor_exit_node
+        self.isp = isp
+        self.mobile_country_code = mobile_country_code
+        self.mobile_network_code = mobile_network_code
+        self.organization = organization
+        self.static_ip_score = static_ip_score
+        self.user_type = user_type
+        self.user_count = user_count
+        self.ip_address = ip_address
+        if network is None:
+            self._network = None
+        else:
+            self._network = ipaddress.ip_network(network, False)
+        # We don't construct the network using prefix_len here as that is
+        # for database lookups. Customers using the database tend to be
+        # much more performance sensitive than web service users.
+        self._prefix_len = prefix_len
+
+    @property
+    def network(self) -> Optional[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]]:
+        """The network for the record"""
+        # This code is duplicated for performance reasons
+        network = self._network
+        if network is not None:
+            return network
+
+        ip_address = self.ip_address
+        prefix_len = self._prefix_len
+        if ip_address is None or prefix_len is None:
+            return None
+        network = ipaddress.ip_network(f"{ip_address}/{prefix_len}", False)
+        self._network = network
+        return network
+
+"""Remote Authentication Dial-In User Service."""
+
+
+# http://www.untruth.org/~josh/security/radius/radius-auth.html
+# RFC 2865
+
+
+class Radius(pypacker.Packet):
+	__hdr__ = (
+		("code", "B", 0),
+		("id", "B", 0),
+		("len", "H", 4),
+		("auth", "16s", b"")
+	)
+
+	@staticmethod
+	def parse_attrs(buf):
+		"""
+		Parse attributes buffer into a list of (type, data) tuples.
+		"""
+		attrs = []
+		while buf:
+			t = ord(buf[0])
+			hlen = ord(buf[1])
+			if hlen < 2:
+				break
+			d, buf = buf[2:hlen], buf[hlen:]
+			attrs.append((t, d))
+		return attrs
+
+
+# Codes
+RADIUS_ACCESS_REQUEST	= 1
+RADIUS_ACCESS_ACCEPT	= 2
+RADIUS_ACCESS_REJECT	= 3
+RADIUS_ACCT_REQUEST	= 4
+RADIUS_ACCT_RESPONSE	= 5
+RADIUS_ACCT_STATUS	= 6
+RADIUS_ACCESS_CHALLENGE	= 11
+
+# Attributes
+RADIUS_USER_NAME		= 1
+RADIUS_USER_PASSWORD		= 2
+RADIUS_CHAP_PASSWORD		= 3
+RADIUS_NAS_IP_ADDR		= 4
+RADIUS_NAS_PORT			= 5
+RADIUS_SERVICE_TYPE		= 6
+RADIUS_FRAMED_PROTOCOL		= 7
+RADIUS_FRAMED_IP_ADDR		= 8
+RADIUS_FRAMED_IP_NETMASK	= 9
+RADIUS_FRAMED_ROUTING		= 10
+RADIUS_FILTER_ID		= 11
+RADIUS_FRAMED_MTU		= 12
+RADIUS_FRAMED_COMPRESSION	= 13
+RADIUS_LOGIN_IP_HOST		= 14
+RADIUS_LOGIN_SERVICE		= 15
+RADIUS_LOGIN_TCP_PORT		= 16
+# unassigned
+RADIUS_REPLY_MESSAGE		= 18
+RADIUS_CALLBACK_NUMBER		= 19
+RADIUS_CALLBACK_ID		= 20
+# unassigned
+RADIUS_FRAMED_ROUTE		= 22
+RADIUS_FRAMED_IPX_NETWORK	= 23
+RADIUS_STATE			= 24
+RADIUS_CLASS			= 25
+RADIUS_VENDOR_SPECIFIC		= 26
+RADIUS_SESSION_TIMEOUT		= 27
+RADIUS_IDLE_TIMEOUT		= 28
+RADIUS_TERMINATION_ACTION	= 29
+RADIUS_CALLED_STATION_ID	= 30
+RADIUS_CALLING_STATION_ID	= 31
+RADIUS_NAS_ID			= 32
+RADIUS_PROXY_STATE		= 33
+RADIUS_LOGIN_LAT_SERVICE	= 34
+RADIUS_LOGIN_LAT_NODE		= 35
+RADIUS_LOGIN_LAT_GROUP		= 36
+RADIUS_FRAMED_ATALK_LINK	= 37
+RADIUS_FRAMED_ATALK_NETWORK	= 38
+RADIUS_FRAMED_ATALK_ZONE	= 39
+# 40-59 reserved for accounting
+RADIUS_CHAP_CHALLENGE		= 60
+RADIUS_NAS_PORT_TYPE		= 61
+RADIUS_PORT_LIMIT		= 62
+RADIUS_LOGIN_LAT_PORT		= 63
+
+"""
+Generate an alert when a client transmits more data than the server.
+
+Additionally, the user can specify a threshold. This means that an alert
+will be generated if the client transmits more than three times as much data
+as the server.
+
+The default threshold value is 3.0, meaning that any client transmits
+more than three times as much data as the server will generate an alert.
+
+Examples:
+1) decode -d reverse-flow <pcap>
+    Generates an alert for client transmissions that are three times
+    greater than the server transmission.
+
+2) decode -d reverse-flow <pcap> --reverse-flow_threshold 61
+    Generates an alert for all client transmissions that are 61 times
+    greater than the server transmission
+
+3) decode -d reverse-flow <pcap> --reverse-flow_threshold 61  --reverse-flow_zero
+    Generates an alert for all client transmissions that are 61 times greater
+    than the server transmission.
+"""
+
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+
+    def __init__(self):
+        super().__init__(
+            name="reverse-flows",
+            description="Generate an alert if the client transmits more data than the server",
+            author="me",
+            bpf="tcp or udp",
+            output=AlertOutput(label=__name__),
+            optiondict={
+               'threshold': {'type':float, 'default':3.0,
+                             'help':'Alerts if client transmits more than threshold times the data of the server'},
+               'minimum': {'type':int, 'default':0,
+                           'help':'alert on client transmissions larger than min bytes [default: 0]'},
+               'zero': {'action':'store_true', 'default':False,
+                        'help':'alert if the server transmits zero bytes [default: false]'},
+            },
+            longdescription="""
+Generate an alert when a client transmits more data than the server.
+
+Additionally, the user can specify a threshold. This means that an alert
+will be generated if the client transmits more than three times as much data
+as the server.
+
+The default threshold value is 3.0, meaning that any client transmits
+more than three times as much data as the server will generate an alert.
+
+Examples:
+1) decode -d reverse-flow <pcap>
+    Generates an alert for client transmissions that are three times
+    greater than the server transmission.
+
+2) decode -d reverse-flow <pcap> --reverse-flow_threshold 61
+    Generates an alert for all client transmissions that are 61 times
+    greater than the server transmission
+
+3) decode -d reverse-flow <pcap> --reverse-flow_threshold 61  --reverse-flow_zero
+    Generates an alert for all client transmissions that are 61 times greater
+    than the server transmission.
+            """,
+        )
+
+    def premodule(self):
+        if self.threshold < 0:
+            self.logger.warning("Cannot have a negative threshold. Defaulting to 3.0. (threshold: {0})".format(self.threshold))
+            self.threshold = 3.0
+        elif not self.threshold:
+            self.logger.warning("Threshold not set. Displaying all client-server transmissions (threshold: {0})".format(self.threshold))
+
+    def connection_handler(self, conn):
+        if conn.clientbytes < self.minimum:
+            return
+
+        if self.zero or (conn.serverbytes and float(conn.clientbytes)/conn.serverbytes > self.threshold):
+            self.write('client sent {:>6.2f} more than the server'.format(conn.clientbytes/float(conn.serverbytes)), **conn.info(), dir_arrow="->")
+            return conn
+
+"""
+Remote Framebuffer Protocol
+# http://www.realvnc.com/docs/rfbproto.pdf
+# RFP uses dynamic ports 5900+, we won't auto-decode this!
+"""
+
+# Client to Server Messages
+CLIENT_SET_PIXEL_FORMAT			= 0
+CLIENT_SET_ENCODINGS			= 2
+CLIENT_FRAMEBUFFER_UPDATE_REQUEST	= 3
+CLIENT_KEY_EVENT			= 4
+CLIENT_POINTER_EVENT			= 5
+CLIENT_CUT_TEXT				= 6
+
+# Server to Client Messages
+SERVER_FRAMEBUFFER_UPDATE		= 0
+SERVER_SET_COLOUR_MAP_ENTRIES		= 1
+SERVER_BELL				= 2
+SERVER_CUT_TEXT				= 3
+
+
+class RFB(pypacker.Packet):
+	__hdr__ = (
+		("type", "B", 0),
+	)
+
+
+class SetPixelFormat(pypacker.Packet):
+	__hdr__ = (
+		("pad", "3s", b"A" * 3),
+		("pixel_fmt", "16s", b"A" * 16)
+	)
+
+
+class SetEncodings(pypacker.Packet):
+	__hdr__ = (
+		("pad", "1s", b"A"),
+		("num_encodings", "H", 0)
+	)
+
+
+class FramebufferUpdateRequest(pypacker.Packet):
+	__hdr__ = (
+		("incremental", "B", 0),
+		("x_position", "H", 0),
+		("y_position", "H", 0),
+		("width", "H", 0),
+		("height", "H", 0)
+	)
+
+
+class KeyEvent(pypacker.Packet):
+	__hdr__ = (
+		("down_flag", "B", 0),
+		("pad", "2s", b"A" * 2),
+		("key", "I", 0)
+	)
+
+
+class PointerEvent(pypacker.Packet):
+	__hdr__ = (
+		("button_mask", "B", 0),
+		("x_position", "H", 0),
+		("y_position", "H", 0)
+	)
+
+
+class FramebufferUpdate(pypacker.Packet):
+	__hdr__ = (
+		("pad", "1s", b"A" * 1),
+		("num_rects", "H", 0)
+	)
+
+
+class SetColourMapEntries(pypacker.Packet):
+	__hdr__ = (
+		("pad", "1s", b"A" * 1),
+		("first_colour", "H", 0),
+		("num_colours", "H", 0)
+	)
+
+
+class CutText(pypacker.Packet):
+	__hdr__ = (
+		("pad", "3s", b"A" * 3),
+		("length", "I", 0)
+	)
+
+"""Routing Information Protocol."""
+
+logger = logging.getLogger("pypacker")
+
+# RIP v2 - RFC 2453
+# http://tools.ietf.org/html/rfc2453
+
+REQUEST		= 1
+RESPONSE	= 2
+
+
+class RIP(pypacker.Packet):
+	__hdr__ = (
+		("cmd", "B", REQUEST),
+		("v", "B", 2),
+		("rsvd", "H", 0),
+		("rte_auth", None, triggerlist.TriggerList)
+	)
+
+	def _dissect(self, buf):
+		self.rte_auth(buf[4:], self._parse_auths)
+		return len(buf)
+
+	def _parse_auths(self, buf):
+		off = 0
+		auths = []
+
+		while off + 20 <= len(buf):
+			if buf[off: off + 2] == b"\xff\xff":
+				auth_rte = RIP.Auth(buf[off: off + 20])
+			else:
+				auth_rte = RIP.RTE(buf[off: off + 20])
+			# logger.debug("RIP: adding auth/rte: %s" % auth_rte)
+			auths.append(auth_rte)
+			off += 20
+		return auths
+
+	class RTE(pypacker.Packet):
+		__hdr__ = (
+			("family", "H", 2),
+			("route_tag", "H", 0),
+			("addr", "I", 0),
+			("subnet", "I", 0),
+			("next_hop", "I", 0),
+			("metric", "I", 1)
+		)
+
+	class Auth(pypacker.Packet):
+		__hdr__ = (
+			("rsvd", "H", 0xFFFF),
+			("type", "H", 2),
+			("auth", "16s", b"\x00" * 16)
+		)
+"""
+Identifies HTTP traffic and reassembles file transfers before writing them to
+files.
+"""
+
+
+class DshellPlugin(HTTPPlugin):
+    def __init__(self):
+        super().__init__(
+            name="rip-http",
+            author="bg,twp",
+            bpf="tcp and (port 80 or port 8080 or port 8000)",
+            description="Rips files from HTTP traffic",
+            output=AlertOutput(label=__name__),
+            optiondict={'append_conn':
+                            {'action': 'store_true',
+                             'help': 'append sourceip-destip to filename'},
+                        'append_ts':
+                            {'action': 'store_true',
+                             'help': 'append timestamp to filename'},
+                        'direction':
+                            {'help': 'cs=only capture client POST, sc=only capture server GET response',
+                             'metavar': '"cs" OR "sc"',
+                             'default': None},
+                        'outdir':
+                            {'help': 'directory to write output files (Default: current directory)',
+                             'metavar': 'DIRECTORY',
+                             'default': '.'},
+                        'content_filter':
+                            {'help': 'regex MIME type filter for files to save',
+                             'metavar': 'REGEX'},
+                        'name_filter':
+                            {'help': 'regex filename filter for files to save',
+                             'metavar': 'REGEX'}
+            }
+        )
+
+    def premodule(self):
+        if self.direction not in ('cs', 'sc', None):
+            self.logger.warning("Invalid value for direction: {!r}. Argument must be either 'sc' for server-to-client or 'cs' for client-to-server.".format(self.direction))
+            sys.exit(1)
+
+        if self.content_filter:
+            self.content_filter = re.compile(self.content_filter)
+        if self.name_filter:
+            self.name_filter = re.compile(self.name_filter)
+
+        self.openfiles = {}
+
+        if not os.path.exists(self.outdir):
+            try:
+                os.makedirs(self.outdir)
+            except (IOError, OSError) as e:
+                self.error("Could not create output directory: {!r}: {!s}"
+                           .format(self.outdir, e))
+                sys.exit(1)
+
+    def http_handler(self, conn, request, response):
+        if (not self.direction or self.direction == 'cs') and request and request.method == "POST" and request.body:
+            if not self.content_filter or self.content_filter.search(request.headers.get('content-type', '')):
+                payload = request
+        elif (not self.direction or self.direction == 'sc') and response and response.status[0] == '2':
+            if not self.content_filter or self.content_filter.search(response.headers.get('content-type', '')):
+                payload = response
+        else:
+            payload = None
+
+        if not payload:
+            # Connection did not match any filters, so get rid of it
+            return
+
+        host = request.headers.get('host', conn.serverip)
+        url = host + request.uri
+
+        if url in self.openfiles:
+            # File is already open, so just insert the new data
+            s, e = self.openfiles[url].handleresponse(response)
+            self.logger.debug("{0!r} --> Range: {1} - {2}".format(url, s, e))
+        else:
+            # A new file!
+            filename = request.uri.split('?', 1)[0].split('/')[-1]
+            if self.name_filter and self.name_filter.search(filename):
+                # Filename did not match filter, so get rid of it
+                return
+            if not filename:
+                # Assume index.html if there is no filename
+                filename = "index.html"
+            if self.append_conn:
+                filename += "_{0}-{1}".format(conn.serverip, conn.clientip)
+            if self.append_ts:
+                filename += "_{}".format(conn.ts)
+            while os.path.exists(os.path.join(self.outdir, filename)):
+                filename += "_"
+            self.write("New file {} ({})".format(filename, url), **conn.info(), dir_arrow="<-")
+            self.openfiles[url] = HTTPFile(os.path.join(self.outdir, filename), self)
+            s, e = self.openfiles[url].handleresponse(payload)
+            self.logger.debug("{0!r} --> Range: {1} - {2}".format(url, s, e))
+        if self.openfiles[url].done():
+            self.write("File done {} ({})".format(filename, url), **conn.info(), dir_arrow="<-")
+            del self.openfiles[url]
+
+        return conn, request, response
+
+
+class HTTPFile(object):
+    """
+    An internal class used to hold metadata for open HTTP files.
+    Used mostly to reassemble fragmented transfers.
+    """
+
+    def __init__(self, filename, plugin_instance):
+        self.complete = False
+        # Expected size in bytes of full file transfer
+        self.size = 0
+        # List of tuples indicating byte chunks already received and written to
+        # disk
+        self.ranges = []
+        self.plugin = plugin_instance
+        self.filename = filename
+        try:
+            self.fh = open(filename, 'wb')
+        except IOError as e:
+            self.plugin.error(
+                "Could not create file {!r}: {!s}".format(filename, e))
+            self.fh = None
+
+    def __del__(self):
+        if self.fh is None:
+            return
+        self.fh.close()
+        if not self.done():
+            self.plugin.warning("Incomplete file: {!r}".format(self.filename))
+            try:
+                os.rename(self.filename, self.filename + "_INCOMPLETE")
+            except:
+                pass
+            ls = 0
+            le = 0
+            for s, e in self.ranges:
+                if s > le + 1:
+                    self.plugin.warning(
+                        "Missing bytes between {0} and {1}".format(le, s))
+                ls, le = s, e
+
+    def handleresponse(self, response):
+        # Check for Content Range
+        range_start = 0
+        range_end = len(response.body) - 1
+        if 'content-range' in response.headers:
+            m = re.search(
+                'bytes (\d+)-(\d+)/(\d+|\*)', response.headers['content-range'])
+            if m:
+                range_start = int(m.group(1))
+                range_end = int(m.group(2))
+                if len(response.body) < (range_end - range_start + 1):
+                    range_end = range_start + len(response.body) - 1
+                try:
+                    if int(m.group(3)) > self.size:
+                        self.size = int(m.group(3))
+                except:
+                    pass
+        elif 'content-length' in response.headers:
+            try:
+                if int(response.headers['content-length']) > self.size:
+                    self.size = int(response.headers['content-length'])
+            except:
+                pass
+        # Update range tracking
+        self.ranges.append((range_start, range_end))
+        # Write part of file
+        if self.fh is not None:
+            self.fh.seek(range_start)
+            self.fh.write(response.body)
+        return (range_start, range_end)
+
+    def done(self):
+        self.checkranges()
+        return self.complete
+
+    def checkranges(self):
+        self.ranges.sort()
+        current_start = 0
+        current_end = 0
+        foundgap = False
+        # print self.ranges
+        for s, e in self.ranges:
+            if s <= current_end + 1:
+                current_end = e
+            else:
+                foundgap = True
+                current_start = s
+                current_end = e
+        if not foundgap:
+            if (current_end + 1) >= self.size:
+                self.complete = True
+        return foundgap
+
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+"""Real-Time Transport Protocol"""
+
+
+# version 1100 0000 0000 0000 ! 0xC000	14
+# p		  0010 0000 0000 0000 ! 0x2000	13
+# x		  0001 0000 0000 0000 ! 0x1000	12
+# cc	  0000 1111 0000 0000 ! 0x0F00	 8
+# m		  0000 0000 1000 0000 ! 0x0080	 7
+# pt	  0000 0000 0111 1111 ! 0x007F	 0
+#
+
+_VERSION_MASK	= 0xC000
+_P_MASK		= 0x2000
+_X_MASK		= 0x1000
+_CC_MASK	= 0x0F00
+_M_MASK		= 0x0080
+_PT_MASK	= 0x007F
+_VERSION_SHIFT	= 14
+_P_SHIFT	= 13
+_X_SHIFT	= 12
+_CC_SHIFT	= 8
+_M_SHIFT	= 7
+_PT_SHIFT	= 0
+
+VERSION = 2
+
+
+class RTP(pypacker.Packet):
+	__hdr__ = (
+		("type", "H", 0x8000),
+		("seq", "H", 0),
+		("ts", "I", 0),
+		("ssrc", "I", 0)
+	)
+
+	def getversion(self):
+		return (self.type & _VERSION_MASK) >> _VERSION_SHIFT
+
+	def setversion(self, value):
+		self.type = (value << _VERSION_SHIFT) | (self.type & ~_VERSION_MASK)
+	version = property(getversion, setversion)
+
+	def getp(self):
+		return (self.type & _P_MASK) >> _P_SHIFT
+
+	def setp(self, value):
+		self.type = (value << _P_SHIFT) | (self.type & ~_P_MASK)
+	p = property(getp, setp)
+
+	def getx(self):
+		return (self.type & _X_MASK) >> _X_SHIFT
+
+	def setx(self, value):
+		self.type = (value << _X_SHIFT) | (self.type & ~_X_MASK)
+	x = property(getx, setx)
+
+	def getcc(self):
+		return (self.type & _CC_MASK) >> _CC_SHIFT
+
+	def setcc(self, value):
+		self.type = (value << _CC_SHIFT) | (self.type & ~_CC_MASK)
+	cc = property(getcc, setcc)
+
+	def getm(self):
+		return (self.type & _M_MASK) >> _M_SHIFT
+
+	def setm(self, value):
+		self.type = (value << _M_SHIFT) | (self.type & ~_M_MASK)
+	m = property(getm, setm)
+
+	def getpt(self):
+		return (self.type & _PT_MASK) >> _PT_SHIFT
+
+	def setpt(self, value):
+		self.type = (value << _PT_SHIFT) | (self.type & ~_PT_MASK)
+	pt = property(getpt, setpt)
+
+
+####################################################################
+#
+#
+#           DSHELL R SCRIPTS END
+#
+###################################################################
+
+
+####################################################################
+#
+#
+#           DSHELL S SCRIPTS START
+#
+###################################################################
+
+"""
+Stream Control Transmission Protocol.
+http://tools.ietf.org/html/rfc3286
+http://tools.ietf.org/html/rfc2960
+"""
+
+logger = logging.getLogger("pypacker")
+
+
+# Chunk Types
+DATA			= 0
+INIT			= 1
+INIT_ACK		= 2
+SACK			= 3
+HEARTBEAT		= 4
+HEARTBEAT_ACK		= 5
+ABORT			= 6
+SHUTDOWN		= 7
+SHUTDOWN_ACK		= 8
+ERROR			= 9
+COOKIE_ECHO		= 10
+COOKIE_ACK		= 11
+ECNE			= 12
+CWR			= 13
+SHUTDOWN_COMPLETE	= 14
+
+
+class Chunk(pypacker.Packet):
+	__hdr__ = (
+		("type", "B", INIT),
+		("flags", "B", 0),
+		("len", "H", 0)		# length of header up to end (including data)
+	)
+	# May have padding
+
+
+"""
+Data Chunk:
+type		B
+flags		B
+len		H
+tseq		I
+streamid	H
+sseq		H
+ppid		I
+"""
+
+
+class SCTP(pypacker.Packet):
+	__hdr__ = (
+		("sport", "H", 0),
+		("dport", "H", 0),
+		("vtag", "I", 0),
+		("sum", "I", 0, FIELD_FLAG_AUTOUPDATE),
+		("chunks", None, triggerlist.TriggerList),
+		[("padding", b"")]
+	)
+
+	__handler__ = {
+		123: diameter.Diameter,
+	}
+
+	@staticmethod
+	def _dissect_chunks(collect_chunks=True):
+		collect = [collect_chunks]
+
+		def _dissect_chunks_sub(buf):
+			off = 0
+			buflen = len(buf)
+			padding = b""
+			chunks = []
+			CHUNKHEADER_DATA_OFF_PPID = 12
+			CHUNKHEADER_DATA_LEN = CHUNKHEADER_DATA_OFF_PPID + 4
+
+			while off + 4 < buflen:
+				chunktype = buf[off]
+				dlen = unpack_H(buf[off + 2: off + 4])[0]
+				#logger.debug("Chunk: chunktype=%r, dlen=%r" % (chunktype, dlen))
+
+				if chunktype != 0:
+					chunk = Chunk(buf[off: off + dlen])
+					chunks.append(chunk)
+					off += dlen
+				else:
+					#logger.debug("Got DATA chunk")
+					# Check for padding (this should be a data chunk)
+					if not collect_chunks:
+						if off + dlen < buflen:
+							padding = buf[off + dlen:].tobytes()
+					else:
+						# Remove data from chunk: use those for handler
+						chunk = Chunk(buf[off: off + CHUNKHEADER_DATA_LEN])
+						chunks.append(chunk)
+
+					off += CHUNKHEADER_DATA_LEN
+					# Assume DATA is the last chunk
+					break
+
+				off += dlen
+
+			#logger.debug("Returning chunks (%r)/off,padding: %r/%r,%r" % (collect[0], chunks, off, padding))
+			return chunks if collect[0] else (off, padding)
+
+		return _dissect_chunks_sub
+
+	def _dissect(self, buf):
+		off_chunks = 12
+		chunks_len, padding = SCTP._dissect_chunks( # pylint: disable=unbalanced-tuple-unpacking
+			collect_chunks=False)(buf[off_chunks:])
+		self.padding = padding
+		self.chunks(buf[off_chunks: off_chunks + chunks_len], SCTP._dissect_chunks())
+		#logger.debug("sctp base header len=%r, Chunk len=%r, padding len=%r" % (off_chunks, chunks_len, len(padding)))
+		hlen = off_chunks + chunks_len
+		htype = None
+
+		try:
+			# Source or destination port should match
+			ports = [unpack_H(buf[0:2])[0], unpack_H(buf[2:4])[0]]
+			htype = [x for x in ports if x in self._id_handlerclass_dct[tcp.TCP]][0]
+		except:
+			#except Exception as ex:
+			# No type found
+			#logger.warning("Invalid htypt? %r, %r" % (htype, ex))
+			pass
+
+		#logger.debug("Full buffer: %s" % buf.tobytes())
+		#logger.debug("Padding: %s" % self.padding)
+		#logger.debug("Header bytes: %s" % buf[:hlen].tobytes())
+		#logger.debug("Body bytes: %r" % buf[hlen: -len(padding)].tobytes())
+		return hlen, htype, buf[hlen:] if len(padding) == 0 else buf[hlen: -len(padding)]
+
+	def bin(self, update_auto_fields=True):
+		# Padding needs to be placed at the end
+		return pypacker.Packet.bin(self, update_auto_fields=update_auto_fields) + self.padding
+
+	def __len__(self):
+		return super().__len__() + len(self.padding)
+
+	def _update_fields(self):
+		if self.sum_au_active and self._changed():
+			# logger.debug("updating checksum")
+			self._calc_sum()
+
+	def _calc_sum(self):
+		# mark as changed
+		self.sum = 0
+		s = checksum.crc32_add(0xFFFFFFFF, self._pack_header())
+		padlen = len(self.padding)
+
+		if padlen == 0:
+			s = checksum.crc32_add(s, self.body_bytes)
+		else:
+			#logger.debug("checksum with padding")
+			s = checksum.crc32_add(s, self.body_bytes[:-padlen])
+
+		self.sum = checksum.crc32_done(s)
+
+	def direction(self, other):
+		#logger.debug("checking direction: %s<->%s" % (self, other))
+		if self.sport == other.sport and self.dport == other.dport:
+			# consider packet to itself: can be DIR_REV
+			return pypacker.Packet.DIR_SAME | pypacker.Packet.DIR_REV
+		if self.sport == other.dport and self.dport == other.sport:
+			return pypacker.Packet.DIR_REV
+		return pypacker.Packet.DIR_UNKNOWN
+
+	def reverse_address(self):
+		self.sport, self.dport = self.dport, self.sport
+
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+
+    def __init__(self):
+        super().__init__(
+            name="search",
+            author="dev195",
+            bpf="tcp or udp",
+            description="Search for patterns in connections",
+            longdescription="""
+Reconstructs streams and searches the content for a user-provided regular
+expression. Requires definition of the --search_expression argument. Additional
+options can be provided to alter behavior.
+            """,
+            output=AlertOutput(label=__name__),
+            optiondict={
+                "expression": {
+                    "help": "Search expression",
+                    "type": str,
+                    "metavar": "REGEX"},
+                "ignorecase": {
+                    "help": "Ignore case when searching",
+                    "action": "store_true"},
+                "invert": {
+                    "help": "Return connections that DO NOT match expression",
+                    "action": "store_true"},
+                "quiet": {
+                    "help": "Do not display matches from this plugin. Useful when chaining plugins.",
+                    "action": "store_true"}
+            })
+
+
+
+    def premodule(self):
+        # make sure the user actually provided an expression to search for
+        if not self.expression:
+            self.error("Must define an expression to search for using --search_expression")
+            sys.exit(1)
+
+        # define the regex flags, based on arguments
+        re_flags = 0
+        if self.ignorecase:
+            re_flags = re_flags | re.IGNORECASE
+
+        # Create the regular expression
+        try:
+            # convert expression to bytes so it can accurately compare to
+            # the connection data (which is also of type bytes)
+            byte_expression = bytes(self.expression, 'utf-8')
+            self.regex = re.compile(byte_expression, re_flags)
+        except Exception as e:
+            self.error("Could not compile regex ({0})".format(e))
+            sys.exit(1)
+
+
+
+    def connection_handler(self, conn):
+        """
+        Go through the data of each connection.
+        If anything is a hit, return the entire connection.
+        """
+
+        match_found = False
+        for blob in conn.blobs:
+            for line in blob.data.splitlines():
+                match = self.regex.search(line)
+                if match and self.invert:
+                    return None
+                elif match and not self.invert:
+                    match_found = True
+                    if not self.quiet:
+                        if blob.sip == conn.sip:
+                            self.write(printable_text(line, False), **conn.info(), dir_arrow="->")
+                        else:
+                            self.write(printable_text(line, False), **conn.info(), dir_arrow="<-")
+                elif self.invert and not match:
+                    if not self.quiet:
+                        self.write(**conn.info())
+                    return conn
+        if match_found:
+            return conn
+
+
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+"""Session Initiation Protocol."""
+
+from pypacker.layer567.http import HTTP
+
+
+class SIP(HTTP):
+	pass
+"""
+Signal Level Attenuation Characterization (SLAC)
+HomePlug Green PHY Specification
+"""
+import logging
+import sys
+
+from pypacker import pypacker
+from pypacker.pypacker import Packet
+from pypacker.structcbs import pack_H_le, unpack_H, unpack_H_le
+from pypacker.triggerlist import TriggerList
+
+logger = logging.getLogger("pypacker")
+
+MASK_MSGTYPE_LE = 0xFCF9
+MASK_MMTYPELSB_LE = 0x0300
+MASK_MMTYPEMSB_LE = 0x0006
+
+module_this = sys.modules[__name__]
+
+# who defined all that useless messages???
+TYPEINFO_DESCRIPTION = {
+	# Central <-> Station
+	0x0000: "CC_CCO_APPOINT",
+	0x0004: "CC_BACKUP_APP",
+	0x0008: "CC_LINK_INFO",
+	0x000C: "CC_HANDOVER",
+	0x0010: "CC_HANDOVER_INFO",
+	0x0014: "CC_DISCOVER_LIST",
+	0x0018: "CC_LINK_NEW",
+	0x001C: "CC_LINK_MOD",
+	0x0020: "CC_LINK_SQZ",
+	0x0024: "CC_LINK_REL",
+	0x0028: "CC_DETECT_REPORT",
+	0x002C: "CC_WHO_RU",
+	0x0030: "CC_ASSOC",
+	0x0034: "CC_LEAVE",
+	0x0038: "CC_SET_TEI_MAP",
+	0x003C: "CC_RELAY",
+	0x0040: "CC_BEACON_RELIABILITY.REQ",
+	0x0044: "CC_ALLOC_MOVE",
+	0x0048: "CC_ACCESS_NEW",
+	0x004C: "CC_ACCESS_REL",
+	0x0050: "CC_DCPPC",
+	0x0054: "CC_HP1_DET",
+	0x0058: "CC_BLE_UPDATE",
+	0x005C: "CC_BCAST_REPEAT",
+	0x0060: "CC_MH_LINK_NEW",
+	0x0064: "CC_ISP_DetectionReport.IND",
+	0x0068: "CC_ISP_StartReSync",
+	0x006C: "CC_ISP_FinishReSync",
+	0x0070: "CC_ISP_ReSyncDetected.IND",
+	0x0074: "CC_ISP_ReSyncTransmit.REQ",
+	0x0078: "CC_POWERSAVE.",
+	0x007C: "CC_POWERSAVE_EXIT.REQ",
+	0x0080: "CC_POWERSAVE_LIST.REQ",
+	0x0084: "CC_STOP_POW",
+	# Proxy Coordinator
+	0x2000: "CP_PROXY_APPOINT",
+	0x2004: "PH_PROXY_APPOINT",
+	0x2008: "CP_PROXY_WAKE.",
+	# CCo - CCo
+	0x4000: "NN_INL.REQ",
+	0x4004: "NN_NEW_NET.RE",
+	0x4008: "NN_ADD_ALLOC.R",
+	0x400C: "NN_REL_ALLOC.R",
+	0x4010: "NN_REL_NET.IND",
+	# Station - Station
+	0x6000: "CM_UNASSOCIATED",
+	0x6004: "CM_ENCRYPTED_PAYLOAD",
+	0x6008: "CM_SET_KEY",
+	0x600C: "CM_GET_KEY",
+	0x6010: "CM_SC_JOIN",
+	0x6014: "CM_CHAN_EST",
+	0x6018: "CM_TM_UPDATE",
+	0x601C: "CM_AMP_MAP",
+	0x6020: "CM_BRG_INFO",
+	0x6024: "CM_CONN_NEW",
+	0x6028: "CM_CONN_REL",
+	0x602C: "CM_CONN_MOD",
+	0x6030: "CM_CONN_INFO",
+	0x6034: "CM_STA_CAP",
+	0x6038: "CM_NW_INFO",
+	0x603C: "CM_GET_BEACON",
+	0x6040: "CM_HFID",
+	0x6044: "CM_MME_ERROR",
+	0x6048: "CM_NW_STATS",
+	0x604C: "CM_LINK_STATS",
+	0x6050: "CM_ROUTE_INFO",
+	0x6054: "CM_UNREACHABLE",
+	0x6058: "CM_MH_CONN_NEW",
+	0x605C: "CM_EXTENDED_TONEMASK",
+	0x6060: "CM_STA_IDENTIFY",
+	0x6064: "CM_SLAC_PARM",
+	0x6068: "CM_START_ATTEN_CHAR",
+	0x606C: "CM_ATTEN_CHAR",
+	0x6070: "CM_PKCS_CERT",
+	0x6074: "CM_MNBC_SOUND",
+	0x6078: "CM_VALIDATE",
+	0x607C: "CM_SLAC_MATCH",
+	0x6080: "CM_SLAC_USER_DATA",
+	0x6084: "CM_ATTEN_PROFILE",
+	0xA0B8: "VS_PL_LNK_STATUS"
+}
+
+# Reverse access of message IDs
+for msgid, name in TYPEINFO_DESCRIPTION.items():
+	setattr(module_this, name, msgid)
+
+# Management message type LSB
+MMTYPE_LSB_DESCRIPTION = {
+	0x00: "MMTYPELSB_REQUEST",
+	0x01: "MMTYPELSB_CONFIRM",
+	0x02: "MMTYPELSB_INDICATION",
+	0x03: "MMTYPELSB_RESPONSE"
+}
+
+for msgid, name in MMTYPE_LSB_DESCRIPTION.items():
+	setattr(module_this, name, msgid)
+
+# Management message type MSB
+MMTYPE_MSB_DESCRIPTION = {
+	0x00: "MMTYPEMSB_STA__CentralCoordinator",
+	0x01: "MMTYPEMSB_ProxyCoordinator",
+	0x02: "MMTYPEMSB_CentralCoordinator__CentralCoordinator",
+	0x03: "MMTYPEMSB_STA__STA",
+	0x04: "MMTYPEMSB_Manufacturer_Specific"
+}
+
+for msgid, name in MMTYPE_MSB_DESCRIPTION.items():
+	setattr(module_this, name, msgid)
+
+
+MASK_FRAGINDEX = 0xF0
+MASK_FRAGCOUNT = 0x0F
+
+
+class Slac(Packet):
+	__hdr__ = (
+		("version", "B", 1),
+		("typeinfo", "H", 0),
+		("frag_info", "B", 0),
+		("frag_seq", "B", 0)
+	)
+
+	def _dissect(self, buf):
+		typeinfo_be = unpack_H_le(buf[1: 3])[0]
+		hlen = 5
+
+		# VS_PL_LNK_STATUS does not have frag
+		if typeinfo_be in {0xA0B8, 0xA0B9}:
+			# logger.debug("disabling frag")
+			self.frag_info = None
+			self.frag_seq = None
+			hlen = 3
+		# logger.debug("Got type %X", typeinfo_be)
+		return hlen, typeinfo_be
+
+	def _get_fragcount(self):
+		return self.frag_info & MASK_FRAGCOUNT
+
+	def _set_fragcount(self, fragcount):
+		self.frag_info = (self.frag_info & ~MASK_FRAGCOUNT) | (fragcount & MASK_FRAGCOUNT)
+
+	fragcount = property(_get_fragcount, _set_fragcount)
+
+	def _get_fragindex(self):
+		return (self.frag_info & MASK_FRAGINDEX) >> 4
+
+	def _set_fragindex(self, fragindex):
+		self.frag_info = (self.frag_info & ~MASK_FRAGINDEX) | ((fragindex << 4) & MASK_FRAGINDEX)
+
+	fragindex = property(_get_fragindex, _set_fragindex)
+
+	def _get_msgtype(self):
+		typetmp = self.typeinfo & MASK_MSGTYPE_LE
+		return unpack_H(pack_H_le(typetmp))[0]
+
+	def _set_msgtype(self, msgtype):
+		typetmp = unpack_H(pack_H_le(msgtype))[0]
+		self.typeinfo = (self.typeinfo & ~MASK_MSGTYPE_LE) | (typetmp & MASK_MSGTYPE_LE)
+
+	# base message type given as BE
+	msgtype = property(_get_msgtype, _set_msgtype)
+
+	def _get_msgtype_full(self):
+		return unpack_H(pack_H_le(self.typeinfo))[0]
+
+	def _set_msgtype_full(self, msgtype):
+		self.typeinfo = unpack_H(pack_H_le(msgtype))[0]
+
+	# set full typeinfo given as BE
+	msgtype_full_be = property(_get_msgtype_full, _set_msgtype_full)
+
+	def _get_msgtype_s(self):
+		return TYPEINFO_DESCRIPTION.get(self.msgtype, None)
+
+	msgtype_s = property(_get_msgtype_s)
+
+	def _get_mmtypelsb(self):
+		return (self.typeinfo & MASK_MMTYPELSB_LE) >> 8
+
+	def _set_mmtypelsb(self, msgtype):
+		typetmp = self.typeinfo & ~MASK_MMTYPELSB_LE
+		self.typeinfo = typetmp | (msgtype << 8)
+
+	# REQ->CNF, IND->RSP
+	mmtypelsb = property(_get_mmtypelsb, _set_mmtypelsb)
+
+	def _get_mmtypelsb_s(self):
+		return MMTYPE_LSB_DESCRIPTION.get(self.mmtypelsb, None)
+
+	mmtypelsb_s = property(_get_mmtypelsb_s, None)
+
+	def _get_mmtypemsb(self):
+		return (self.typeinfo & MASK_MMTYPEMSB_LE) >> 1
+
+	def _set_mmtypemsb(self, msgtype):
+		typetmp = self.typeinfo & ~MASK_MMTYPEMSB_LE
+		self.typeinfo = typetmp | (msgtype << 1)
+
+	mmtypemsb = property(_get_mmtypemsb, _set_mmtypemsb)
+
+	def _get_mmtypemsb_s(self):
+		return MMTYPE_MSB_DESCRIPTION.get(self.mmtypemsb, None)
+
+	mmtypemsb_s = property(_get_mmtypemsb_s, None)
+
+	class CMSetKeyReq(Packet):
+		__hdr__ = (
+			("keytype", "B", 0),
+			("mynonce", "I", 0),
+			("yournonce", "I", 0),
+			("pid", "B", 0),
+			("prn", "H", 0),
+			("pwm", "B", 0),
+			("ccocapa", "B", 0),
+			("nid", "7s", b"\x00" * 7),
+			("neweks", "B", 0),
+			# length = 0, 16
+			("newkey", None, None),
+		)
+
+	class CMSetKeyICnf(Packet):
+		__hdr__ = (
+			("result", "B", 0),
+			("mynonce", "I", 0),
+			("yournonce", "I", 0),
+			("pid", "B", 0),
+			("prn", "H", 0),
+			("pwm", "B", 0),
+			("ccocapa", "B", 0)
+		)
+
+	class CMAttenCharInd(Packet):
+		__hdr__ = (
+			("apptype", "B", 0),
+			("sectype", "B", 0),
+			("sourceaddr", "6s", b"\x00" * 6),
+			("runid", "Q", 0),
+			("sourceid", "17s", b"\x00" * 17),
+			("respid", "17s", b"\x00" * 17),
+			("numsounds", "B", 0)
+		)
+
+		sourceaddr_s = pypacker.get_property_mac("sourceaddr")
+
+	class CMAttenCharRsp(Packet):
+		__hdr__ = (
+			("apptype", "B", 0),
+			("sectype", "B", 0),
+			("sourceaddr", "6s", b"\x00" * 6),
+			("runid", "Q", 0),
+			("sourceid", "17s", b"\x00" * 17),
+			("respid", "17s", b"\x00" * 17),
+			("result", "B", 0)
+		)
+
+		sourceaddr_s = pypacker.get_property_mac("sourceaddr")
+
+	class CMSlacParmReq(Packet):
+		__hdr__ = (
+			("apptype", "B", 0),
+			("sectype", "B", 0),
+			("runid", "Q", 0),
+			# Only present if security type is 1
+			("ciphersuitesize", "B", None),
+			("ciphersuites", None, TriggerList)
+		)
+
+	class CMSlacParmCnf(Packet):
+		__hdr__ = (
+			("msoundtarget", "6s", b"\x00" * 6),
+			("numsounds", "B", 0),
+			("timeout", "B", 0),
+			("resptype", "B", 0),
+			("forwardingsta", "6s", b"\x00" * 6),
+			("apptype", "B", 0),
+			("sectype", "B", 0),
+			("runid", "Q", 0),
+			# Only present if security type is 1
+			("ciphersuite", "H", None)
+		)
+
+		msoundtarget_s = pypacker.get_property_mac("msoundtarget")
+		forwardingsta_s = pypacker.get_property_mac("forwardingsta")
+
+	class CMStartAttenCharInd(Packet):
+		__hdr__ = (
+			("apptype", "B", 0),
+			("sectype", "B", 0),
+			("numsounds", "B", 0),
+			("timeout", "B", 0),
+			("resptype", "B", 0),
+			("forwardingsta", "6s", b"\x00" * 6),
+			("runid", "Q", 0),
+		)
+
+		forwardingsta_s = pypacker.get_property_mac("forwardingsta")
+
+	class CMMnbcSoundInd(Packet):
+		__hdr__ = (
+			("apptype", "B", 0),
+			("sectype", "B", 0),
+			("senderid", "17s", b"\x00" * 17),
+			("cnt", "B", 0),
+			("runid", "Q", 0),
+			("rsvd", "8s", b"\x00" * 8),
+			("rnd", "16s", b"\x00" * 16)
+		)
+
+	class CMSlacMatchReq(Packet):
+		__hdr__ = (
+			("apptype", "B", 0),
+			("sectype", "B", 0),
+			("mvflen", "H", 0),
+			("pevid", "17s", b"\x00" * 17),
+			("pevmac", "6s", b"\x00" * 6),
+			("evseid", "17s", b"\x00" * 17),
+			("evsemac", "6s", b"\x00" * 6),
+			("runid", "Q", 0),
+			("rsvd", "8s", b"\x00" * 8)
+		)
+
+		def _get_mvflen_be(self):
+			return unpack_H(pack_H_le(self.mvflen))[0]
+
+		def _set_mvflen_be(self, val):
+			self.mvflen = unpack_H(pack_H_le(val))[0]
+
+		mvflen_be = property(_get_mvflen_be, _set_mvflen_be)
+
+		pevmac_s = pypacker.get_property_mac("pevmac")
+		evsemac_s = pypacker.get_property_mac("evsemac")
+
+	class CMSlacMatchCnf(Packet):
+		__hdr__ = (
+			("apptype", "B", 0),
+			("sectype", "B", 0),
+			("mvflen", "H", 0),
+			("pevid", "17s", b"\x00" * 17),
+			("pevmac", "6s", b"\x00" * 6),
+			("evseid", "17s", b"\x00" * 17),
+			("evsemac", "6s", b"\x00" * 6),
+			("runid", "Q", 0),
+			("rsvd1", "8s", b"\x00" * 8),
+			("nid", "7s", b"\x00" * 7),
+			("rsvd2", "B", 0),
+			("nmk", "16s", b"\x00" * 16),
+		)
+
+		pevmac_s = pypacker.get_property_mac("pevmac")
+		evsemac_s = pypacker.get_property_mac("evsemac")
+
+	class CMLinkStatsReq(Packet):
+		__hdr__ = (
+			("reqtype", "B", 0),
+			("reqid", "B", 0),
+			("nid", "7s", b"\x00" * 7),
+			("lid", "B", 0),
+			("tlflag", "B", 0),
+			("mgmtflag", "B", 0),
+			("dasa", "6s", b"\x00" * 6)
+		)
+
+		dasa_s = pypacker.get_property_mac("dasa")
+
+	# TODO: LinkStats payload as handler for CMLinkStatsCnf, how to differentiate?
+
+	class CMLinkStatsCnf(Packet):
+		__hdr__ = (
+			("reqid", "B", 0),
+			("restype", "B", 0),
+			("linkstats", "H", 0)
+		)
+
+	class VSPLLinkStatusReq(Packet):
+		__hdr__ = (
+			("oui", "3s", b"\x00" * 3),
+		)
+
+	class VSPLLinkStatusCnf(Packet):
+		__hdr__ = (
+			("oui", "3s", b"\x00" * 3),
+			("link", "H", 0),
+		)
+
+	class AMPMapReq(Packet):
+		__hdr__ = (
+			("amlen", "H", 0),
+		)
+
+	class AMPMapCnf(Packet):
+		__hdr__ = (
+			("restype", "B", 0),
+		)
+
+	class CMPKCSCertReq(Packet):
+		__hdr__ = (
+			("targetmac", "6s", b"\x00" * 6),
+			("ciphersuitesize", "B", 0),
+			("cipersuite", None, TriggerList)
+		)
+
+		targetmac_s = pypacker.get_property_mac("targetmac")
+
+	class CMPKCSCertCnf(Packet):
+		__hdr__ = (
+			("targetmac", "6s", b"\x00" * 6),
+			("status", "B", 0),
+			("cipersuite", "H", 0),
+			("certlen", "H", 0),
+			("certpackage", None, TriggerList)
+		)
+
+		targetmac_s = pypacker.get_property_mac("targetmac")
+
+	class CMPKCSCertInd(Packet):
+		"""
+		When the CM_SLAC_PARM.CNF indicates that Secure SLAC is required, the PEV-HLE
+		shall send a CM_PKCS_CERT.IND message. The Target MAC address for this message
+		shall be set to MAC address of the PEV Green PHY station. To ensure reliable
+		reception of this message at all EVSEs, it is recommended that this message be
+		transmitted at least three times by the PEV-HLE. If the CM_PKCS_CERT.IND message is
+		larger than 502 Octets, the message shall be fragmented by the HLE (refer to
+		Section 11.1.7).
+		"""
+		__hdr__ = (
+			("targetmac", "6s", b"\x00" * 6),
+			("cipersuite", "H", 0),
+			("certlen", "H", 0),
+			("certpackage", None, TriggerList)
+		)
+
+		targetmac_s = pypacker.get_property_mac("targetmac")
+
+	class CMPKCSCertRsp(Packet):
+		__hdr__ = (
+			("targetmac", "6s", b"\x00" * 6),
+			("status", "B", 0),
+			("ciphersuitesize", "B", 0),  # optional
+			("cipersuite", None, TriggerList)
+		)
+
+		targetmac_s = pypacker.get_property_mac("targetmac")
+
+	__handler__ = {
+		CM_SET_KEY | MMTYPELSB_REQUEST: CMSetKeyReq,
+		CM_SET_KEY | MMTYPELSB_CONFIRM: CMSetKeyICnf,
+		CM_SLAC_MATCH | MMTYPELSB_REQUEST: CMSlacMatchReq,
+		CM_SLAC_MATCH | MMTYPELSB_CONFIRM: CMSlacMatchCnf,
+		CM_ATTEN_CHAR | MMTYPELSB_INDICATION: CMAttenCharInd,
+		CM_ATTEN_CHAR | MMTYPELSB_RESPONSE: CMAttenCharRsp,
+		CM_SLAC_PARM | MMTYPELSB_REQUEST: CMSlacParmReq,
+		CM_SLAC_PARM | MMTYPELSB_CONFIRM: CMSlacParmCnf,
+		# MS:new
+		CM_START_ATTEN_CHAR | MMTYPELSB_INDICATION: CMStartAttenCharInd,
+		CM_MNBC_SOUND | MMTYPELSB_INDICATION: CMMnbcSoundInd,
+		CM_LINK_STATS | MMTYPELSB_REQUEST: CMLinkStatsReq,
+		CM_LINK_STATS | MMTYPELSB_CONFIRM: CMLinkStatsCnf,
+		VS_PL_LNK_STATUS | MMTYPELSB_REQUEST: VSPLLinkStatusReq,
+		VS_PL_LNK_STATUS | MMTYPELSB_CONFIRM: VSPLLinkStatusCnf,
+		CM_AMP_MAP | MMTYPELSB_REQUEST: AMPMapReq,
+		CM_AMP_MAP | MMTYPELSB_CONFIRM: AMPMapCnf,
+		CM_PKCS_CERT | MMTYPELSB_REQUEST: CMPKCSCertReq,
+		CM_PKCS_CERT | MMTYPELSB_CONFIRM: CMPKCSCertCnf,
+		CM_PKCS_CERT | MMTYPELSB_INDICATION: CMPKCSCertInd,
+		CM_PKCS_CERT | MMTYPELSB_RESPONSE: CMPKCSCertRsp
+	}
+
+"""Server Message Block."""
+
+
+class SMB(pypacker.Packet):
+	__hdr__ = [
+		("proto", "4s", b""),
+		("cmd", "B", 0),
+		("err", "I", 0),
+		("flags1", "B", 0),
+		("flags2", "B", 0),
+		("pad", "6s", b""),
+		("tid", "H", 0),
+		("pid", "H", 0),
+		("uid", "H", 0),
+		("mid", "H", 0)
+	]
+
+
+"""
+Scalable service-Oriented MiddlewarE over IP (SOME/IP)
+https://www.autosar.org/fileadmin/user_upload/standards/foundation/1-2/AUTOSAR_PRS_SOMEIPServiceDiscoveryProtocol.pdf
+"""
+
+logger = logging.getLogger("pypacker")
+
+
+RET_CODE_E_OK				= 0x00
+RET_CODE_E_NOT_OK			= 0x01
+RET_CODE_E_UNKNOWN_SERVICE		= 0x02
+RET_CODE_E_UNKNOWN_METHOD		= 0x03
+RET_CODE_E_NOT_READY			= 0x04
+RET_CODE_E_NOT_REACHABLE		= 0x05
+RET_CODE_E_TIMEOUT			= 0x06
+RET_CODE_E_WRONG_PROTOCOL_VERSION	= 0x07
+RET_CODE_E_WRONG_INTERFACE_VERSION	= 0x08
+RET_CODE_E_MALFORMED_MESSAGE		= 0x09
+RET_CODE_E_WRONG_MESSAGE_TYPE		= 0x0A
+# Other codes: RESERVED
+
+
+class SomeIP(Packet):
+	__hdr__ = (
+		("serviceid", "H", 0),
+		("methodid", "H", 0),
+		("length", "I", 8, FIELD_FLAG_AUTOUPDATE),  # in bytes, inclusive 8 bytes of header
+		("clientid", "H", 0),
+		("sessionid", "H", 0),
+		("protoversion", "B", 0),
+		("ifaceversion", "B", 0),
+		("msgtype", "B", 0),
+		("retcode", "B", 0)
+	)
+
+	def _update_fields(self):
+		if not self._changed():
+			return
+
+		if self.length_au_active:
+			self.length = 8 + len(self.body_bytes)
+
+"""
+Identifies DNS resolutions that fall into special IP spaces (i.e. private,
+reserved, loopback, multicast, link-local, or unspecified).
+
+When found, it will print an alert for the request/response pair. The alert
+will include the type of special IP in parentheses:
+    (loopback)
+    (private)
+    (reserved)
+    (multicast)
+    (link-local)
+    (unspecified)
+"""
+
+
+
+class DshellPlugin(dnsplugin.DNSPlugin):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            name="special-ips",
+            description="identify DNS resolutions that fall into special IP (IPv4 and IPv6) spaces (i.e. private, reserved, loopback, multicast, link-local, or unspecified)",
+            bpf="port 53",
+            author="dev195",
+            output=AlertOutput(label=__name__),
+            longdescription="""
+Identifies DNS resolutions that fall into special IP spaces (i.e. private,
+reserved, loopback, multicast, link-local, or unspecified).
+
+When found, it will print an alert for the request/response pair. The alert
+will include the type of special IP in parentheses:
+    (loopback)
+    (private)
+    (reserved)
+    (multicast)
+    (link-local)
+    (unspecified)
+
+For example, to look for responses with private IPs:
+    Dshell> decode -d specialips ~/pcap/SkypeIRC.cap  |grep "(private)"
+    [special-ips] 2006-08-25 15:31:06      192.168.1.2:2128  --      192.168.1.1:53    ** ID: 12579, A? voyager.home., A: 192.168.1.1 (private) (ttl 10000s) **
+
+Finding can also be written to a separate pcap file by chaining:
+    Dshell> decode -d specialips+pcapwriter --pcapwriter_outfile="special-dns.pcap" ~/pcap/example.pcap
+""",
+        )
+
+
+    def dns_handler(self, conn, requests, responses):
+        """
+        Stores the DNS request, then iterates over responses looking for
+        special IP addresses. If it finds one, it will print an alert for the
+        request/response pair.
+        """
+        msg = []
+
+        if requests:
+            request_pkt = requests[-1]
+            request = request_pkt.pkt.highest_layer
+            id = request.id
+            for query in request.queries:
+                if query.type == dns.DNS_A:
+                    msg.append("A? {}".format(query.name_s))
+                elif query.type == dns.DNS_AAAA:
+                    msg.append("AAAA? {}".format(query.name_s))
+
+
+        if responses:
+            keep_responses = False
+            for response in responses:
+                response = response.pkt.highest_layer
+                for answer in response.answers:
+                    if answer.type == dns.DNS_A or answer.type == dns.DNS_AAAA:
+                        answer_ip = ipaddress.ip_address(answer.address)
+                        msg_fields = {}
+                        msg_format = "A: {ip} ({type}) (ttl {ttl}s)"
+                        msg_fields['ip'] = str(answer_ip)
+                        msg_fields['ttl'] = str(answer.ttl)
+                        msg_fields['type'] = ''
+                        if answer_ip.is_loopback:
+                            msg_fields['type'] = 'loopback'
+                            keep_responses = True
+                        elif answer_ip.is_private:
+                            msg_fields['type'] = 'private'
+                            keep_responses = True
+                        elif answer_ip.is_reserved:
+                            msg_fields['type'] = 'reserved'
+                            keep_responses = True
+                        elif answer_ip.is_multicast:
+                            msg_fields['type'] = 'multicast'
+                            keep_responses = True
+                        elif answer_ip.is_link_local:
+                            msg_fields['type'] = 'link-local'
+                            keep_responses = True
+                        elif answer_ip.is_unspecified:
+                            msg_fields['type'] = 'unspecified'
+                            keep_responses = True
+                        msg.append(msg_format.format(**msg_fields))
+            if keep_responses:
+                msg.insert(0, "ID: {}".format(id))
+                msg = ", ".join(msg)
+                self.write(msg, **conn.info())
+                return conn, requests, responses
+
+"""
+Extract server ssh public key from key exchange
+"""
+
+
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+
+    def __init__(self):
+        super().__init__(
+            name="ssh-pubkey",
+            author="amm",
+            description="Extract server ssh public key from key exchange",
+            bpf="tcp port 22",
+            output=AlertOutput(label=__name__)
+        )
+
+    def connection_handler(self, conn):
+
+        server_banner = ''
+        sc_blob_count = 0
+        cs_blob_count = 0
+
+        info = {}
+
+        for blob in conn.blobs:
+
+            #
+            # CS Blobs: Only interest is a client banner
+            #
+            if blob.direction == 'cs':
+                cs_blob_count += 1
+                if cs_blob_count > 1:
+                    continue
+                else:
+                    blob.reassemble(allow_overlap=True, allow_padding=True)
+                    if not blob.data:
+                        continue
+                    info['clientbanner'] = blob.data.split(b'\x0d')[0].rstrip()
+                    if not info['clientbanner'].startswith(b'SSH'):
+                        return conn  # NOT AN SSH CONNECTION
+                    try:
+                        info['clientbanner'] = info['clientbanner'].decode(
+                            'utf-8')
+                    except UnicodeDecodeError:
+                        return conn
+                    continue
+
+            #
+            # SC Blobs: Banner and public key
+            #
+            sc_blob_count += 1
+            blob.reassemble(allow_overlap=True, allow_padding=True)
+            if not blob.data:
+                continue
+            d = blob.data
+
+            # Server Banner
+            if sc_blob_count == 1:
+                info['serverbanner'] = d.split(b'\x0d')[0].rstrip()
+                if not info['serverbanner'].startswith(b'SSH'):
+                    return conn  # NOT AN SSH CONNECTION
+                try:
+                    info['serverbanner'] = info['serverbanner'].decode('utf-8')
+                except UnicodeDecodeError:
+                    pass
+                continue
+
+            # Key Exchange Packet/Messages
+            mlist = messagefactory(d)
+            stop_blobs = False
+            for m in mlist:
+                if m.message_code == 31 or m.message_code == 33:
+                    info['host_pubkey'] = m.host_pub_key
+                    stop_blobs = True
+                    break
+            if stop_blobs:
+                break
+
+        #print(repr(info))
+
+        if 'host_pubkey' in info:
+            # Calculate key fingerprints
+            info['host_fingerprints'] = {}
+            for hash_scheme in ("md5", "sha1", "sha256"):
+                hashfunction = eval("hashlib."+hash_scheme)
+                thisfp = key_fingerprint(info['host_pubkey'], hashfunction)
+                info['host_fingerprints'][hash_scheme] = ':'.join(
+                    ['%02x' % b for b in thisfp])
+
+            msg = "%s" % (info['host_pubkey'])
+            self.write(msg, **info, **conn.info())
+            return conn
+
+
+def messagefactory(data):
+
+    datalen = len(data)
+    offset = 0
+    msglist = []
+    while offset < datalen:
+        try:
+            msg = sshmessage(data[offset:])
+        except ValueError:
+            return msglist
+        msglist.append(msg)
+        offset += msg.packet_len + 4
+
+    return msglist
+
+
+class sshmessage:
+
+    def __init__(self, rawdata):
+        self.__parse_raw(rawdata)
+
+    def __parse_raw(self, data):
+        datalen = len(data)
+        if datalen < 6:
+            raise ValueError
+
+        (self.packet_len, self.padding_len,
+         self.message_code) = struct.unpack(">IBB", data[0:6])
+        if datalen < self.packet_len + 4:
+            raise ValueError
+        self.body = data[6:4+self.packet_len]
+
+        # ECDH Kex Reply
+        if self.message_code == 31 or self.message_code == 33:
+            host_key_len = struct.unpack(">I", self.body[0:4])[0]
+            full_key_net = self.body[4:4+host_key_len]
+            key_type_name_len = struct.unpack(">I", full_key_net[0:4])[0]
+            key_type_name = full_key_net[4:4+key_type_name_len]
+            key_data = full_key_net[4+key_type_name_len:]
+            if key_type_name_len > 50:
+                # something went wrong
+                # this probably isn't a code 31
+                self.message_code = 0
+            else:
+                self.host_pub_key = "%s %s" % (key_type_name.decode(
+                    'utf-8'), base64.b64encode(full_key_net).decode('utf-8'))
+
+
+def key_fingerprint(ssh_pubkey, hashfunction=hashlib.sha256):
+
+    # Treat as bytes, not string
+    if type(ssh_pubkey) == str:
+        ssh_pubkey = ssh_pubkey.encode('utf-8')
+
+    # Strip space from end
+    ssh_pubkey = ssh_pubkey.rstrip(b"\r\n\0 ")
+
+    # Only look at first line
+    ssh_pubkey = ssh_pubkey.split(b"\n")[0]
+    # If two spaces, look at middle segment
+    if ssh_pubkey.count(b" ") >= 1:
+        ssh_pubkey = ssh_pubkey.split(b" ")[1]
+
+    # Try to decode key as base64
+    try:
+        keybin = base64.b64decode(ssh_pubkey)
+    except:
+        sys.stderr.write("Invalid key value:\n")
+        sys.stderr.write("  \"%s\":\n" % ssh_pubkey)
+        return None
+
+    # Fingerprint
+    return hashfunction(keybin).digest()
+
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+"""
+Nicely formatted cipher suite definitions for TLS
+
+A list of cipher suites in the form of CipherSuite objects.
+These are supposed to be immutable; don't mess with them.
+"""
+
+
+class CipherSuite():
+	"""
+	Encapsulates a cipher suite.
+
+	Members/args:
+	* code: two-byte ID code, as int
+	* name: as in 'TLS_RSA_WITH_RC4_40_MD5'
+	* kx: key exchange algorithm, string
+	* auth: authentication algorithm, string
+	* encoding: encoding algorithm
+	* mac: message authentication code algorithm
+	"""
+
+	def __init__(self, code, name, kx, auth, encoding, mac): # pylint: disable=too-many-arguments
+		self.code = code
+		self.name = name
+		self.kx = kx
+		self.auth = auth
+		self.encoding = encoding
+		self.mac = mac
+
+	def __repr__(self):
+		return 'CipherSuite(%s)' % self.name
+
+	MAC_SIZES = {
+		'MD5': 16,
+		'SHA': 20,
+		'SHA256': 32,		# I guess
+	}
+
+	BLOCK_SIZES = {
+		'AES_256_CBC': 16,
+	}
+
+	@property
+	def mac_size(self):
+		"""In bytes. Default to 0."""
+		return self.MAC_SIZES.get(self.mac, 0)
+
+	@property
+	def block_size(self):
+		"""In bytes. Default to 1."""
+		return self.BLOCK_SIZES.get(self.encoding, 1)
+
+
+# Master list of CipherSuite Objects
+CIPHERSUITES = [
+	# not a real cipher suite, can be ignored, see RFC5746
+	CipherSuite(0xFF, 'TLS_EMPTY_RENEGOTIATION_INFO', 'NULL', 'NULL', 'NULL', 'NULL'),
+	CipherSuite(0x00, 'TLS_NULL_WITH_NULL_NULL', 'NULL', 'NULL', 'NULL', 'NULL'),
+	CipherSuite(0x01, 'TLS_RSA_WITH_NULL_MD5', 'RSA', 'RSA', 'NULL', 'MD5'),
+	CipherSuite(0x02, 'TLS_RSA_WITH_NULL_SHA', 'RSA', 'RSA', 'NULL', 'SHA'),
+	# not sure I got the kx/auth thing right.
+	CipherSuite(0x0039, 'TLS_DHE_RSA_WITH_AES_256_CBC_SHA', 'DHE', 'RSA', 'AES_256_CBC', 'SHA'),
+	CipherSuite(0xFFFF, 'UNKNOWN_CIPHER', '', '', '', '')
+]
+
