@@ -3995,3 +3995,1717 @@ def load_privatekey(
     return pkey
 
 
+
+def dump_certificate_request(type: int, req: X509Req) -> bytes:
+    """
+    Dump the certificate request *req* into a buffer string encoded with the
+    type *type*.
+
+    :param type: The file type (one of FILETYPE_PEM, FILETYPE_ASN1)
+    :param req: The certificate request to dump
+    :return: The buffer with the dumped certificate request in
+    """
+    bio = _new_mem_buf()
+
+    if type == FILETYPE_PEM:
+        result_code = _lib.PEM_write_bio_X509_REQ(bio, req._req)
+    elif type == FILETYPE_ASN1:
+        result_code = _lib.i2d_X509_REQ_bio(bio, req._req)
+    elif type == FILETYPE_TEXT:
+        result_code = _lib.X509_REQ_print_ex(bio, req._req, 0, 0)
+    else:
+        raise ValueError(
+            "type argument must be FILETYPE_PEM, FILETYPE_ASN1, or "
+            "FILETYPE_TEXT"
+        )
+
+    _openssl_assert(result_code != 0)
+
+    return _bio_to_string(bio)
+
+
+_dump_certificate_request_internal = dump_certificate_request
+
+utils.deprecated(
+    dump_certificate_request,
+    __name__,
+    (
+        "CSR support in pyOpenSSL is deprecated. You should use the APIs "
+        "in cryptography."
+    ),
+    DeprecationWarning,
+    name="dump_certificate_request",
+)
+
+
+
+# Constants
+FILETYPE_PEM = 1
+FILETYPE_ASN1 = 2
+FILETYPE_TEXT = 3
+
+class _X509ReqInternal:
+    def __init__(self):
+        self._req = None
+
+class MODE_AUTO:
+    pass
+
+class MODE_MMAP_EXT:
+    pass
+
+class MODE_FILE:
+    pass
+
+class MODE_MEMORY:
+    pass
+
+class MODE_FD:
+    pass
+
+class IO(IOBase):
+    def read(self) -> bytes:
+        return b""
+
+    def write(self, data: bytes) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+class ConnectionPlugin:
+    def __init__(self, name: str, description: str, author: str, output: Any, optiondict: dict):
+        self.name = name
+        self.description = description
+        self.author = author
+        self.output = output
+        self.optiondict = optiondict
+
+    def consume_packet(self, packet: Any) -> None:
+        pass
+
+    def produce_packets(self) -> List[Any]:
+        return []
+
+    def flush(self) -> None:
+        pass
+
+class tabulate:
+    @staticmethod
+    def tabulate(rows: List[List[Any]], headers: List[str]) -> str:
+        return "\n".join([",".join(row) for row in rows])
+
+class faulthandler:
+    @staticmethod
+    def enable() -> None:
+        pass
+
+def configure_output_modules(kwargs: dict) -> None:
+    # Configuration logic for output modules
+    pass
+
+def configure_plugin_options(kwargs: dict) -> None:
+    # Configuration logic for plugin options
+    pass
+
+def get_inputs(kwargs: dict) -> List[str]:
+    # Input retrieval logic
+    return []
+
+def process_files(inputs: List[str], **kwargs) -> None:
+    # File processing logic
+    pass
+
+# Optimized functions
+def load_certificate_request(type: int, buffer: bytes) -> _X509ReqInternal:
+    if isinstance(buffer, str):
+        buffer = buffer.encode("ascii")
+
+    bio = _new_mem_buf(buffer)
+    req = None
+    if type == FILETYPE_PEM:
+        req = _lib.PEM_read_bio_X509_REQ(bio, _ffi.NULL, _ffi.NULL, _ffi.NULL)
+    elif type == FILETYPE_ASN1:
+        req = _lib.d2i_X509_REQ_bio(bio, _ffi.NULL)
+    else:
+        raise ValueError("Invalid type argument")
+
+    if req == _ffi.NULL:
+        _raise_current_error()
+
+    x509req = _X509ReqInternal()
+    x509req._req = _ffi.gc(req, _lib.X509_REQ_free)
+    return x509req
+
+def sign(pkey: Any, data: Union[str, bytes], digest: str) -> bytes:
+    data = _text_to_bytes_and_warn("data", data)
+    digest_obj = _lib.EVP_get_digestbyname(_byte_string(digest))
+    if digest_obj == _ffi.NULL:
+        raise ValueError("No such digest method")
+
+    md_ctx = _lib.EVP_MD_CTX_new()
+    md_ctx = _ffi.gc(md_ctx, _lib.EVP_MD_CTX_free)
+    _lib.EVP_SignInit(md_ctx, digest_obj)
+    _lib.EVP_SignUpdate(md_ctx, data, len(data))
+
+    length = _lib.EVP_PKEY_size(pkey._pkey)
+    if length <= 0:
+        raise ValueError("Invalid key size")
+    signature_buffer = _ffi.new("unsigned char[]", length)
+    signature_length = _ffi.new("unsigned int *")
+    final_result = _lib.EVP_SignFinal(md_ctx, signature_buffer, signature_length, pkey._pkey)
+    if final_result != 1:
+        _raise_current_error()
+
+    return _ffi.buffer(signature_buffer, signature_length[0])[:]
+
+def verify(cert: Any, signature: bytes, data: Union[str, bytes], digest: str) -> None:
+    data = _text_to_bytes_and_warn("data", data)
+    digest_obj = _lib.EVP_get_digestbyname(_byte_string(digest))
+    if digest_obj == _ffi.NULL:
+        raise ValueError("No such digest method")
+
+    pkey = _lib.X509_get_pubkey(cert._x509)
+    if pkey == _ffi.NULL:
+        _raise_current_error()
+    pkey = _ffi.gc(pkey, _lib.EVP_PKEY_free)
+
+    md_ctx = _lib.EVP_MD_CTX_new()
+    md_ctx = _ffi.gc(md_ctx, _lib.EVP_MD_CTX_free)
+    _lib.EVP_VerifyInit(md_ctx, digest_obj)
+    _lib.EVP_VerifyUpdate(md_ctx, data, len(data))
+    verify_result = _lib.EVP_VerifyFinal(md_ctx, signature, len(signature), pkey)
+    if verify_result != 1:
+        _raise_current_error()
+
+def dump_crl(type: int, crl: Any) -> bytes:
+    bio = _new_mem_buf()
+    ret = None
+    if type == FILETYPE_PEM:
+        ret = _lib.PEM_write_bio_X509_CRL(bio, crl._crl)
+    elif type == FILETYPE_ASN1:
+        ret = _lib.i2d_X509_CRL_bio(bio, crl._crl)
+    elif type == FILETYPE_TEXT:
+        ret = _lib.X509_CRL_print(bio, crl._crl)
+    else:
+        raise ValueError("Invalid type argument")
+
+    if ret != 1:
+        _raise_current_error()
+
+    return _bio_to_string(bio)
+
+
+
+# Definitions for constants and functions assumed to be in your codebase
+FILETYPE_PEM = 1
+FILETYPE_ASN1 = 2
+_CRLError = ValueError  # Assuming this as a placeholder
+
+def _new_mem_buf(buffer: bytes) -> Any:
+    # Dummy implementation
+    pass
+
+def _raise_current_error() -> None:
+    # Dummy implementation
+    raise _CRLError("Error occurred")
+
+def _CRLInternal() -> 'CRL':
+    # Dummy implementation of _CRLInternal class
+    class CRL:
+        def __init__(self):
+            self._crl = None
+    return CRL()
+
+def load_crl(type: int, buffer: Union[str, bytes]) -> Any:
+    if isinstance(buffer, str):
+        buffer = buffer.encode("ascii")
+
+    bio = _new_mem_buf(buffer)
+    crl = None
+    if type == FILETYPE_PEM:
+        crl = _lib.PEM_read_bio_X509_CRL(bio, _ffi.NULL, _ffi.NULL, _ffi.NULL)
+    elif type == FILETYPE_ASN1:
+        crl = _lib.d2i_X509_CRL_bio(bio, _ffi.NULL)
+    else:
+        raise ValueError("Invalid type argument")
+
+    if crl == _ffi.NULL:
+        _raise_current_error()
+
+    result = _CRLInternal()
+    result._crl = _ffi.gc(crl, _lib.X509_CRL_free)
+    return result
+
+def decompress_file(filepath: str, extension: str, unzipdir: str) -> List[str]:
+    openfiles = []
+    try:
+        if extension == '.gz':
+            openfiles.append(gzip.open(filepath, 'rb'))
+        elif extension == '.bz2':
+            openfiles.append(bz2.open(filepath, 'rb'))
+        elif extension == '.zip':
+            pswd = getpass.getpass(f"Enter password for .zip file {filepath!r} [default: none]: ").encode()
+            with zipfile.ZipFile(filepath) as z:
+                openfiles.extend(z.open(z2, 'r', pswd) for z2 in z.namelist())
+    except (RuntimeError, zipfile.BadZipFile) as e:
+        logger.error(f"Could not process .zip file {filepath!r}. {e}")
+        return []
+
+    tempfiles = []
+    for openfile in openfiles:
+        with openfile:
+            try:
+                openfile.peek(1)  # Check if file is readable
+                with tempfile.NamedTemporaryFile(dir=unzipdir, delete=False, prefix=os.path.basename(filepath)) as tfile:
+                    tfile.write(openfile.read())
+                    tempfiles.append(tfile.name)
+            except OSError as e:
+                logger.error(f"Could not process compressed file {filepath!r}. {e}")
+    return tempfiles
+
+def print_plugins(plugins: dict) -> None:
+    headers = ['module', 'name', 'title', 'type', 'author', 'description']
+    rows = [
+        [module.__module__, name, module.name, module.__class__.__bases__[0].__name__,
+         module.author, module.description]
+        for name, module in sorted(plugins.items())
+    ]
+    print(tabulate.tabulate(rows, headers=headers))
+
+def main(plugin_args=None, **kwargs) -> None:
+    global plugin_chain
+    if not plugin_args:
+        plugin_args = {}
+
+    faulthandler.enable()
+
+    if not plugin_chain:
+        logger.error("No plugin selected")
+        sys.exit(1)
+
+    plugin_chain[0].defrag_ip = kwargs.get("defrag", False)
+    setup_logging(kwargs)
+    configure_output_modules(kwargs)
+    configure_plugin_options(kwargs)
+    inputs = get_inputs(kwargs)
+    process_files(inputs, **kwargs)
+
+def setup_logging(kwargs: dict) -> None:
+    log_format = "%(levelname)s (%(name)s) - %(message)s"
+    log_level = logging.DEBUG if kwargs.get("debug", False) else \
+                logging.INFO if kwargs.get("verbose", False) else \
+                logging.CRITICAL if kwargs.get("quiet", False) else logging.WARNING
+    logging.basicConfig(format=log_format, level=log_level)
+    logging.getLogger("pypacker").setLevel(logging.CRITICAL)
+    if kwargs.get("allcc", False):
+        logging.getLogger().setLevel(logging.DEBUG)
+
+
+
+# Set up logger
+logger = logging.getLogger(__name__)
+
+def process_plugins(parser: dshell.core.DshellArgumentParser, opts, plugin_map: dict, active_plugins: OrderedDict):
+    """Process and load plugins based on user input."""
+    if opts.plugin:
+        plugins = {plugin.strip() for plugin in '+'.join(opts.plugin).split('+') if plugin.strip()}
+        for plugin in plugins:
+            if plugin not in plugin_map:
+                continue
+            plugin_module = import_module(plugin_map[plugin])
+            plugin_name = plugin
+            # Ensure unique plugin names
+            while plugin_name in active_plugins:
+                plugin_name = f"{plugin}{len(active_plugins) + 1}"
+            active_plugins[plugin_name] = plugin_module.DshellPlugin()
+            plugin_chain.append(active_plugins[plugin_name])
+            parser.add_plugin_arguments(plugin_name, active_plugins[plugin_name])
+
+def display_help_and_exit(parser: dshell.core.DshellArgumentParser, plugin_chain):
+    """Print help messages and exit."""
+    parser.print_help()
+    print("\n".join(f"############### {plugin.name}\n{plugin.longdescription}\nDefault BPF: \"{plugin.bpf}\"" for plugin in plugin_chain))
+    sys.exit()
+
+def display_plugins_and_exit():
+    """List all available plugins and exit."""
+    try:
+        print_plugins(get_plugin_information())
+    except ImportError as e:
+        logger.error(e, exc_info=True)
+    sys.exit()
+
+def display_output_modules_and_exit():
+    """List available output modules and exit."""
+    output_map = get_output_modules(get_output_path())
+    for modulename in sorted(output_map):
+        try:
+            module = import_module(f"dshell.output.{modulename}").obj
+            print(f"\t{modulename:<25} {module._DESCRIPTION}")
+        except Exception as e:
+            logger.debug(f"Could not load {modulename} module. ({e.__class__.__name__}: {e})")
+    sys.exit()
+
+def configure_argument_parser() -> dshell.core.DshellArgumentParser:
+    """Configure and return the argument parser."""
+    parser = dshell.core.DshellArgumentParser(
+        usage="%(prog)s [options] [plugin options] file1 file2 ... fileN",
+        add_help=False
+    )
+    parser.add_argument('-h', '-?', '--help', dest='help', action='store_true', default=False, help="Print common command-line flags and exit")
+    parser.add_argument('--version', action='version', version=f"Dshell {dshell_version}")
+    parser.add_argument('-d', '-p', '--plugin', dest='plugin', type=str, action='append', metavar="PLUGIN", help="Use a specific plugin module")
+    parser.add_argument('--ebpf', default='', type=str, metavar="BPF", help="Extend existing BPFs with provided input for additional filtering")
+    parser.add_argument('-i', '--interface', help="Listen live on INTERFACE instead of reading pcap")
+    parser.add_argument('-l', '--ls', '--list', action="store_true", dest='list', help='List all available plugins')
+    parser.add_argument("--lo", "--list-output", action="store_true", help="List available output modules")
+    parser.add_argument("--cbf", "--color-blind-friendly", action="store_true", help="Activate color blind friendly mode")
+    parser.add_argument("-o", "--omodule", type=str, metavar="MODULE", help="Use specified output module for plugins instead of defaults")
+    parser.add_argument('files', nargs='*', help="pcap files or globs to process")
+    return parser
+
+def main_command_line():
+    global plugin_chain
+    plugin_chain = []
+
+    plugin_map = get_plugins()
+    active_plugins = OrderedDict()
+    parser = configure_argument_parser()
+
+    opts, xopts = parser.parse_known_args()
+    process_plugins(parser, opts, plugin_map, active_plugins)
+
+    if xopts:
+        for xopt in xopts:
+            logger.warning(f'Could not understand argument {xopt!r}')
+
+    if opts.help:
+        display_help_and_exit(parser, plugin_chain)
+
+    if opts.list:
+        display_plugins_and_exit()
+
+    if opts.listoutput:
+        display_output_modules_and_exit()
+
+    if not opts.plugin:
+        parser.epilog = "Select a plugin to use with -d or --plugin"
+        parser.print_help()
+        sys.exit()
+
+    if not opts.files and not opts.interface:
+        parser.epilog = "Include a pcap file or an interface to get started. Use --help for more information."
+        parser.print_help()
+        sys.exit()
+
+    # Prepare arguments for plugins
+    plugin_args = {plugin_name: {darg: getattr(opts, darg) for darg, dattr in parser.get_plugin_arguments(plugin_name, plugin)}
+                   for plugin_name, plugin in active_plugins.items()}
+
+    # Call the main processing function with prepared arguments
+    main(plugin_args=plugin_args, **vars(opts))
+
+if __name__ == "__main__":
+    main_command_line()
+
+
+
+class DshellArgumentParser(argparse.ArgumentParser):
+
+    def add_plugin_arguments(self, plugin_name, plugin_obj):
+        """
+        Adds plugin-specific arguments to the parser.
+        """
+        optiondict = plugin_obj.optiondict
+        if optiondict:
+            group = self.add_argument_group(f'{plugin_obj.name} plugin options')
+            for argname, optargs in optiondict.items():
+                optname = f"{plugin_name}_{argname}"
+                optargs['type'] = custom_bytes if optargs.get('type') == bytes else optargs.get('type')
+                if 'default' in optargs and optargs.get('type') == custom_bytes:
+                    optargs['default'] = custom_bytes(optargs['default'])
+                group.add_argument(f"--{optname}", dest=optname, **optargs)
+
+    def get_plugin_arguments(self, plugin_name, plugin_obj):
+        """
+        Returns a list of argument names and their associated attributes.
+        """
+        optiondict = plugin_obj.optiondict
+        return [(f"{plugin_name}_{argname}", argname) for argname in optiondict] if optiondict else []
+
+logger = logging.getLogger(__name__)
+
+def get_plugins():
+    """
+    Generate a list of all available plugin modules.
+    """
+    plugins = {}
+    import_base = get_plugin_path().split(os.path.sep)[:-1]
+    plugin_path = get_plugin_path()
+
+    # Scan local plugin modules
+    for root, _, files in os.walk(plugin_path):
+        if '__init__.py' in files:
+            import_path = root.split(os.path.sep)[len(import_base):]
+            for f in iglob(os.path.join(root, "*.py")):
+                name = os.path.splitext(os.path.basename(f))[0]
+                if name != '__init__':
+                    if name in plugins:
+                        logger.warning(f"Duplicate plugin name found: {name}")
+                    module = '.'.join(["dshell"] + import_path + [name])
+                    plugins[name] = module
+
+    # Discover additional external plugins
+    for ep_plugin in pkg_resources.iter_entry_points(group="dshell_plugins"):
+        if ep_plugin.name in plugins:
+            logger.warning(f"Duplicate plugin name found: {ep_plugin.name}")
+        plugins[ep_plugin.name] = ep_plugin.module_name
+
+    return plugins
+
+def get_output_modules(output_module_path):
+    """
+    Generate a list of all available output modules.
+    """
+    return [
+        os.path.splitext(os.path.basename(f))[0]
+        for f in iglob(os.path.join(output_module_path, "*.py"))
+        if os.path.splitext(os.path.basename(f))[0] not in {'__init__', 'output'}
+    ]
+
+class DTP(pypacker.Packet):
+    __hdr__ = (
+        ("v", "B", 0),
+        ("tvs", None, triggerlist.TriggerList)
+    )
+
+    @staticmethod
+    def _dissect_tvs(collect_tvs=True):
+        def dissect_tvs_sub(buf):
+            off, tvs = 0, []
+            while off < len(buf):
+                _, hlen = unpack(buf[off: off + 4])
+                if collect_tvs:
+                    tvs.append(DTP.TV(buf[off: off + hlen]))
+                off += hlen
+            return tvs if collect_tvs else off
+        return dissect_tvs_sub
+
+    def _dissect(self, buf):
+        off_tvs = 1
+        dissect_tvs_sub = DTP._dissect_tvs(collect_tvs=False)
+        tvlen = dissect_tvs_sub(buf[off_tvs:])
+        self.tvs(buf[off_tvs: off_tvs + tvlen], DTP._dissect_tvs())
+        return off_tvs + tvlen
+
+    class TV(pypacker.Packet):
+        __hdr__ = (
+            ("t", "H", 0),
+            ("len", "H", 0)
+        )
+
+class DNS(pypacker.Packet):
+    __hdr__ = (
+        ("id", "H", 0x1234),
+        ("flags", "H", DNS_AD | DNS_RD),
+        ("questions_amount", "H", 0, FIELD_FLAG_AUTOUPDATE),
+        ("answers_amount", "H", 0, FIELD_FLAG_AUTOUPDATE),
+        ("authrr_amount", "H", 0, FIELD_FLAG_AUTOUPDATE),
+        ("addrr_amount", "H", 0, FIELD_FLAG_AUTOUPDATE),
+        ("queries", None, triggerlist.TriggerList),
+        ("answers", None, triggerlist.TriggerList),
+        ("auths", None, triggerlist.TriggerList),
+        ("addrecords", None, triggerlist.TriggerList)
+    )
+
+    def _dissect(self, buf):
+        off = 12
+        amounts = unpack(buf[4:12])
+        dissect_methods = [
+            (DNS._dissect_queries, 'queries'),
+            (DNS._dissect_answers, 'answers'),
+            (DNS._dissect_authserver, 'auths'),
+            (DNS._dissect_addreq, 'addrecords')
+        ]
+
+        for dissect_method, attr_name in dissect_methods:
+            length = dissect_method(amounts.pop(0), collect_queries=attr_name == 'queries')(buf[off:])
+            setattr(self, attr_name, getattr(self, f'{attr_name}_tvs')(buf[off: off + length]))
+            off += length
+
+        return off
+
+    @staticmethod
+    def get_dns_length(bts):
+        off = 0
+        while off < len(bts):
+            if bts[off] & 0xC0:
+                return off + 2
+            if bts[off] == 0x00:
+                return off + 1
+            off += bts[off] + 1
+        return 0
+
+    @staticmethod
+    def _dissect_queries(amount, collect_queries=True):
+        def dissect_queries_sub(buf):
+            off, queries = 0, []
+            while amount > 0 and off < len(buf):
+                q_end = off + DNS.get_dns_length(buf[off:]) + 4
+                if collect_queries:
+                    queries.append(DNS.Query(buf[off: q_end]))
+                off = q_end
+                amount -= 1
+            return queries if collect_queries else off
+        return dissect_queries_sub
+
+    @staticmethod
+    def _dissect_answers(amount, collect_answers=True):
+        def dissect_answers_sub(buf):
+            off, answers = 0, []
+            while amount > 0 and off < len(buf):
+                a_end = off + DNS.get_dns_length(buf[off:]) + 8
+                dlen = unpack_H(buf[a_end: a_end + 2])[0]
+                a_end += 2 + dlen
+                if collect_answers:
+                    answers.append(DNS.Answer(buf[off: a_end]))
+                off = a_end
+                amount -= 1
+            return answers if collect_answers else off
+        return dissect_answers_sub
+
+    @staticmethod
+    def _dissect_authserver(amount, collect_authserver=True):
+        def dissect_authserver_sub(buf):
+            off, authserver = 0, []
+            while amount > 0 and off < len(buf):
+                a_end = off + DNS.get_dns_length(buf[off:]) + 8
+                dlen = unpack_H(buf[a_end: a_end + 2])[0]
+                a_end += 2 + dlen
+                if collect_authserver:
+                    authserver.append(DNS.Auth(buf[off: a_end]))
+                off = a_end
+                amount -= 1
+            return authserver if collect_authserver else off
+        return dissect_authserver_sub
+
+    @staticmethod
+    def _dissect_addreq(amount, collect_addreq=True):
+        def dissect_addreq_sub(buf):
+            off, addrecords = 0, []
+            while amount > 0 and off < len(buf):
+                if buf[off: off + 3] == b"\x00\x00\x29":
+                    if collect_addreq:
+                        addrecords.append(DNS.AddRecordRoot(buf[off: off + 11]))
+                    off += 11
+                else:
+                    dlen = unpack_H(buf[off + 10: off + 12])[0]
+                    if collect_addreq:
+                        addrecords.append(DNS.AddRecord(buf[off: off + 12 + dlen]))
+                    off += 12 + dlen
+                amount -= 1
+            return addrecords if collect_addreq else off
+        return dissect_addreq_sub
+
+    def _update_fields(self):
+        if self._header_value_changed:
+            for attr in ['questions_amount', 'answers_amount', 'authrr_amount', 'addrr_amount']:
+                if getattr(self, f'{attr}_au_active'):
+                    setattr(self, attr, len(getattr(self, attr.replace('amount', 'queries'))))
+
+            if any(tl._cached_bin is None for tl in [self.queries, self.answers, self.auths, self.addrecords]):
+                ref_bts = self.header_bytes[:12]
+                for tl in [self.queries, self.answers, self.auths, self.addrecords]:
+                    for idx, tl_element in enumerate(tl):
+                        if isinstance(tl_element, tuple(DNS.TYPES_COMPRESSABLE)):
+                            tl_element.compress(ref_bts)
+                        ref_bts += tl.entry_to_bytes(idx)
+
+class custom_bytes:
+    # Example implementation; modify as needed
+    def __init__(self, value):
+        self.value
+
+
+
+"""
+Checksum logic for various protocols.
+"""
+
+# Setup logging
+logger = logging.getLogger("pypacker")
+
+# Performance optimizations
+array_array = array.array
+ntohs = socket.ntohs
+ENDIANNESS_IS_BIG = sys.byteorder == "big"
+
+# TCP and UDP checksum functions
+def in_cksum_add(s, buf):
+    buflen = len(buf)
+    a = array_array("H", buf[:buflen & ~0x1])
+
+    if ENDIANNESS_IS_BIG:
+        a.byteswap()
+
+    if buflen & 0x1:
+        a.append(unpack("<H", buf[-1:] + b"\x00")[0])
+
+    return s + sum(a)
+
+def in_cksum_done(s):
+    s = (s >> 16) + (s & 0xFFFF)
+    s += (s >> 16)
+    return ntohs((~s) & 0xFFFF)
+
+# Checksum library loading
+def try_load_native_lib():
+    for libname in ["checksum_native_x86_64", "checksum_native_arm_32", "checksum_native_arm_64"]:
+        libpath = os.path.join(os.path.dirname(os.path.realpath(__file__)), "native", f"{libname}.so")
+        logger.debug("Trying to load C-based checksum implementation %s", libname)
+        try:
+            chksumlib = ctypes.cdll.LoadLibrary(libpath)
+            in_chksum_c = chksumlib.in_chksum
+            in_chksum_c.restype = ctypes.c_uint32
+            in_chksum_c.argtypes = (ctypes.POINTER(ctypes.c_char), ctypes.c_uint32)
+            in_chksum_c(b"0123", 4)
+            return in_chksum_c
+        except Exception:
+            continue
+    raise RuntimeError("No suitable C-based checksum implementation found.")
+
+try:
+    in_cksum = try_load_native_lib()
+    logger.debug("Using native checksum implementation")
+except Exception as ex:
+    logger.debug(ex)
+    logger.debug("Using Python checksum implementation")
+    in_cksum = lambda bts: in_cksum_done(in_cksum_add(0, bts))
+
+# CRC-32C Checksum Table (simplified representation)
+crc32c_table = [ ... ]  # Assume the table is defined correctly
+
+# ColorOutput class
+class ColorOutput(Output):
+    _DESCRIPTION = "Reconstructed output with ANSI color codes"
+    _PACKET_FORMAT = """Packet %(counter)s (%(proto)s)
+Start: %(ts)s
+%(sip)16s:%(sport)6s -> %(dip)16s:%(dport)6s (%(bytes)s bytes)
+
+%(data)s
+
+"""
+    _CONNECTION_FORMAT = """Connection %(counter)s (%(protocol)s)
+Start: %(starttime)s
+End:   %(endtime)s
+%(clientip)16s:%(clientport)6s -> %(serverip)16s:%(serverport)6s (%(clientbytes)s bytes)
+%(serverip)16s:%(serverport)6s -> %(clientip)16s:%(clientport)6s (%(serverbytes)s bytes)
+
+%(data)s
+
+"""
+    _DEFAULT_FORMAT = _PACKET_FORMAT
+    _DEFAULT_DELIM = "\n\n"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.counter = 1
+        self.colors = {'cs': '31', 'sc': '32', '--': '34'}
+        self.hexmode = kwargs.get('hex', False)
+        self.format_is_set = False
+
+    def setup(self):
+        """Activate color blind friendly mode."""
+        if self.cbf:
+            self.colors['cs'] = '33'
+
+    def write(self, *args, **kwargs):
+        if not self.format_is_set:
+            format_str = self._CONNECTION_FORMAT if 'clientip' in kwargs else self._PACKET_FORMAT
+            self.set_format(format_str)
+            self.format_is_set = True
+
+        colorformat = "\x1b[%sm%s\x1b[0m"
+        rawdata = self._collect_raw_data(args, kwargs)
+        cleanup_func = dshell.util.hex_plus_ascii if self.hexmode else dshell.util.printable_text
+        rawdata = [(cleanup_func(data), direction) for data, direction in rawdata]
+        data = [colorformat % (self.colors.get(direction, '0'), data) for data, direction in rawdata]
+        super().write(counter=self.counter, *data, **kwargs)
+        self.counter += 1
+
+    def _collect_raw_data(self, args, kwargs):
+        rawdata = []
+        for arg in args:
+            if isinstance(arg, dshell.core.Blob):
+                if arg.data:
+                    rawdata.append((arg.data, arg.direction))
+            elif isinstance(arg, dshell.core.Connection):
+                for blob in arg.blobs:
+                    if blob.data:
+                        rawdata.append((blob.data, blob.direction))
+            elif isinstance(arg, dshell.core.Packet):
+                rawdata.append((arg.pkt.body_bytes, kwargs.get('direction', '--')))
+            elif isinstance(arg, tuple):
+                rawdata.append(arg)
+            else:
+                rawdata.append((arg, kwargs.get('direction', '--')))
+        return rawdata
+
+# Diameter class
+class Diameter(pypacker.Packet):
+    __hdr__ = (
+        ("v", "B", 1),
+        ("len", "3s", b"\x00" * 3),
+        ("flags", "B", 0),
+        ("cmd", "3s", b"\x00" * 3),
+        ("app_id", "I", 0),
+        ("hop_id", "I", 0),
+        ("end_id", "I", 0),
+        ("avps", None, triggerlist.TriggerList)
+    )
+
+    def _dissect(self, buf):
+        self.avps(buf[20:], Diameter._parse_avps)
+        return len(buf)
+
+    class AVP(pypacker.Packet):
+        __hdr__ = (
+            ("code", "I", 0),
+            ("flags", "B", 0),
+            ("len", "3s", b""),
+        )
+
+    @staticmethod
+    def _parse_avps(buf):
+        avps = []
+        off = 0
+        while off < len(buf):
+            avplen = int.from_bytes(buf[off + 5: off + 8], "big")
+            avplen = ((avplen + 3) // 4) * 4
+            avps.append(Diameter.AVP(buf[off: off + avplen]))
+            off += avplen
+        return avps
+
+# DNS Plugin class
+class DshellPlugin(dnsplugin.DNSPlugin):
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            name="DNS",
+            description="Extract and summarize DNS queries and responses",
+            longdescription="""
+The DNS plugin extracts and summarizes DNS queries and their responses. If
+possible, each query is paired with its response(s).
+
+Possible anomalies can be found using the --dns_show_noanswer,
+--dns_only_noanswer, --dns_show_norequest, or --dns_only_norequest flags
+(see --help).
+""",
+            author="bg/twp",
+            bpf="udp and port 53",
+            output=AlertOutput(label=__name__),
+            optiondict={'show_noanswer': {'action': 'store_true', 'help': 'report unanswered queries alongside other queries'},
+                        'show_norequest': {'action': 'store_true', 'help': 'report unsolicited responses alongside other responses'},
+                        'only_noanswer': {'action': 'store_true', 'help': 'report only unanswered queries'},
+                        'only_norequest': {'action': 'store_true', 'help': 'report only unsolicited responses'},
+                        'country': {'action': 'store_true', 'help': 'show country code for returned IP addresses'},
+                        'asn': {'action': 'store_true', 'help': 'show ASN for returned IP addresses'},
+                    }
+        )
+
+    def premodule(self):
+        self.show_norequest |= self.only_norequest
+        self.show_noanswer |= self.only_noanswer
+
+    def dns_handler(self, conn, requests, responses):
+        if (self.only_norequest and requests) or (self.only_noanswer and responses):
+            return
+        if not self.show_norequest and not requests:
+            return
+        if not self.show_noanswer and not responses:
+            return
+
+        msg = []
+        if requests:
+            request_pkt = requests[-1]
+            request = request_pkt.pkt.highest_layer
+            for query in request.queries:
+                msg.append(f"{query.type}? {query.name_s}")
+
+        # Further processing of responses can be added here
+
+        # Example of how to use msg
+        print("\n".join(msg))
+"""Encapsulated Security Protocol."""
+
+from pypacker import pypacker
+
+
+class ESP(pypacker.Packet):
+	__hdr__ = (
+		("spi", "I", 0),
+		("seq", "I", 0)
+	)
+
+"""
+Ethernet II, IEEE 802.3
+
+RFC 1042
+"""
+import logging
+
+from pypacker.layer12 import lldp, slac
+from pypacker import pypacker, triggerlist
+from pypacker.pypacker import FIELD_FLAG_IS_TYPEFIELD
+from pypacker.structcbs import unpack_H
+
+from pypacker.layer12 import arp, dtp, pppoe, flow_control, lacp
+from pypacker.layer3 import ip, ip6, ipx
+from pypacker.layer567 import ptpv2
+
+logger = logging.getLogger("pypacker")
+
+ETH_CRC_LEN	= 4
+ETH_HDR_LEN	= 14
+
+ETH_LEN_MIN	= 64		# minimum frame length with CRC
+ETH_LEN_MAX	= 1518		# maximum frame length with CRC
+
+ETH_MTU		= ETH_LEN_MAX - ETH_HDR_LEN - ETH_CRC_LEN
+ETH_MIN		= ETH_LEN_MIN - ETH_HDR_LEN - ETH_CRC_LEN
+
+# Ethernet payload types - http://standards.ieee.org/regauth/ethertype
+ETH_TYPE_PUP		= 0x0200		# PUP protocol
+ETH_TYPE_IP		= 0x0800		# IPv4 protocol
+ETH_TYPE_ARP		= 0x0806		# address resolution protocol
+ETH_TYPE_WOL		= 0x0842		# Wake on LAN
+ETH_TYPE_CDP		= 0x2000		# Cisco Discovery Protocol
+ETH_TYPE_DTP		= 0x2004		# Cisco Dynamic Trunking Protocol
+ETH_TYPE_REVARP		= 0x8035		# reverse addr resolution protocol
+ETH_TYPE_ETHTALK	= 0x809B		# Apple Talk
+ETH_TYPE_AARP		= 0x80F3		# Appletalk Address Resolution Protocol
+ETH_TYPE_8021Q		= 0x8100		# IEEE 802.1Q VLAN tagging
+ETH_TYPE_IPX		= 0x8137		# Internetwork Packet Exchange
+ETH_TYPE_NOV		= 0x8138		# Novell
+ETH_TYPE_IP6		= 0x86DD		# IPv6 protocol
+ETH_TYPE_MPLS_UCAST	= 0x8847		# MPLS unicast
+ETH_TYPE_MPLS_MCAST	= 0x8848		# MPLS multicast
+ETH_TYPE_PPOE_DISC	= 0x8863		# PPPoE Discovery
+ETH_TYPE_PPOE_SESS	= 0x8864		# PPPoE Session
+ETH_TYPE_JUMBOF		= 0x8870		# Jumbo Frames
+ETH_TYPE_PROFINET	= 0x8892		# Realtime-Ethernet PROFINET
+ETH_TYPE_ATAOE		= 0x88A2		# ATA other Ethernet
+ETH_TYPE_ETHERCAT	= 0x88A4		# Realtime-Ethernet Ethercat
+ETH_TYPE_PBRIDGE	= 0x88A8		# Provider Bridging IEEE 802.1ad
+ETH_TYPE_POWERLINK	= 0x88AB		# Realtime Ethernet POWERLINK
+ETH_TYPE_LLDP		= 0x88CC		# Link Layer Discovery Protocol
+ETH_TYPE_SERCOS		= 0x88CD		# Realtime Ethernet SERCOS III
+ETH_TYPE_PTPV2		= 0x88F7		# PTPv2 IEEE 1588-2008
+ETH_TYPE_FIBRE_ETH	= 0x8906		# Fibre Channel over Ethernet
+ETH_TYPE_FCOE		= 0x8914		# FCoE Initialization Protocol (FIP)
+ETH_TYPE_TUNNELING	= 0x9100		# Provider Bridging IEEE 802.1QInQ 2007
+ETH_TYPE_EFC		= 0x8808		# Ethernet flow control
+ETH_TYPE_SP		= 0x8809		# Slow Protocols
+ETH_TYPE_SLAC		= 0x88E1		# SLAC
+
+
+# MPLS label stack fields
+MPLS_LABEL_MASK		= 0xFFFFF000
+MPLS_QOS_MASK		= 0x00000E00
+MPLS_TTL_MASK		= 0x000000FF
+MPLS_LABEL_SHIFT	= 12
+MPLS_QOS_SHIFT		= 9
+MPLS_TTL_SHIFT		= 0
+MPLS_STACK_BOTTOM	= 0x0100
+
+
+# Standard or double vlan tag
+# ETH_TYPE_TUNNELING as outer tag is NON-standard!
+# see: https://en.wikipedia.org/wiki/IEEE_802.1ad
+VLAN_TAG_START = {ETH_TYPE_8021Q, ETH_TYPE_PBRIDGE, ETH_TYPE_TUNNELING}
+
+
+class Ethernet(pypacker.Packet):
+	__hdr__ = [
+		("dst", "6s", b"\xff" * 6),
+		("src", "6s", b"\xff" * 6),
+		("vlan", None, triggerlist.TriggerList),
+		("type", "H", ETH_TYPE_IP, FIELD_FLAG_IS_TYPEFIELD),
+		[("padding", b"")]
+	]
+
+	dst_s = pypacker.get_property_mac("dst")
+	src_s = pypacker.get_property_mac("src")
+	type_t = pypacker.get_property_translator("type", "ETH_TYPE_")
+
+	__handler__ = {
+		ETH_TYPE_IP: ip.IP,
+		ETH_TYPE_ARP: arp.ARP,
+		ETH_TYPE_DTP: dtp.DTP,
+		ETH_TYPE_IPX: ipx.IPX,
+		ETH_TYPE_IP6: ip6.IP6,
+		ETH_TYPE_PPOE_DISC: pppoe.PPPoE,
+		ETH_TYPE_PPOE_SESS: pppoe.PPPoE,
+		ETH_TYPE_PTPV2: ptpv2.PTPv2,
+		ETH_TYPE_EFC: flow_control.FlowControl,
+		ETH_TYPE_LLDP: lldp.LLDP,
+		ETH_TYPE_SP: lacp.LACP,
+		ETH_TYPE_SLAC: slac.Slac
+	}
+
+	class Dot1Q(pypacker.Packet):
+		__hdr__ = (
+			("type", "H", ETH_TYPE_8021Q),
+			("tci", "H", 0)  # tag control information PCP(3 bits),CFI(1 bit), VID(12 bits)
+		)
+
+		def __get_prio(self):
+			return (self.tci & 0xE000) >> 13
+
+		def __set_prio(self, value):
+			self.tci = (self.tci & ~0xE000) | (value << 13)
+		prio = property(__get_prio, __set_prio)
+
+		def __get_cfi(self):
+			return (self.tci & 0x1000) >> 12
+
+		def __set_cfi(self, value):
+			self.tci = (self.tci & ~0x1000) | (value << 12)
+		cfi = property(__get_cfi, __set_cfi)
+
+		def __get_vid(self):
+			return self.tci & 0x0FFF
+
+		def __set_vid(self, value):
+			self.tci = self.tci & 0xF000 | value
+		vid = property(__get_vid, __set_vid)
+
+		type_t = pypacker.get_property_translator("type", "ETH_TYPE_")
+
+	def _dissect(self, buf):
+		hlen = 14
+		# Ethernet formats:
+		# RFC 894 (Ethernet II) -> type = -> value >1500
+		# 802.[2,3] (LLC format) -> type = length field -> value <=1500, not supported
+		eth_type = unpack_H(buf[hlen - 2: hlen])[0]
+
+		# Any VLAN tag present? in this case: type field is actually a vlan tag
+		if eth_type in VLAN_TAG_START:
+			if eth_type == ETH_TYPE_8021Q:
+				#logger.debug("VLAN: ETH_TYPE_8021Q")
+				self.vlan(buf[12: 16], lambda tval: Ethernet.Dot1Q(tval))
+				hlen += 4
+				# Get real higher layer type
+				eth_type = unpack_H(buf[16: 18])[0]
+			# 802.1ad: support up to 2 tags (double tagging aka QinQ)
+			else:
+				#logger.debug("VLAN: 802.1ad")
+				self.vlan(buf[12: 20], lambda tval: [Ethernet.Dot1Q(tval[0: 4]), Ethernet.Dot1Q(tval[4: 8])])
+				hlen += 8
+				# Get real higher layer type
+				eth_type = unpack_H(buf[20: 22])[0]
+
+		#logger.debug("eth type is: %d" % eth_type)
+
+		# Handle ethernet-padding: remove it but save for later use.
+		# Don't use headers for this because this is a rare situation.
+		dlen = len(buf) - hlen  # data length, "may" include padding
+
+		# Ethernet packets with less than the minimum 64 bytes (header + all upper layer data + FCS) are padded to 64 bytes.
+		# Ethernet won't give us the real data vs. padding length so assume everything at "the border" of 60 bytes is padded
+		# and check this by analyzing the higher layer data-ength info.
+		# Note: creates unneeded checks if there is no padding (total data length is 60 "by accident").
+		if len(buf) <= 60:
+			try:
+				# This will only work on complete headers: Ethernet + IP + ...
+				# Handle padding using IPv4, IPv6 etc (min size "eth + ..." = 60 bytes)
+				#logger.debug("Checking for padding, dlen: %d < 46" % dlen)
+				if eth_type == ETH_TYPE_IP:
+					#logger.debug("Padding: ETH_TYPE_IP")
+					dlen_ip = unpack_H(buf[hlen + 2: hlen + 4])[0]  # Real data length
+
+					if dlen_ip < dlen:
+						# Padding found
+						self.padding = buf[hlen + dlen_ip:].tobytes()
+						#logger.debug("Got padding for (ip total length=%d): %r" % (dlen_ip, self.padding))
+						dlen = dlen_ip
+				# Handle padding using IPv6
+				# IPv6 is a piece of sh$§! payloadlength (in header) = exclusive standard header
+				# but INCLUSIVE options!
+				elif eth_type == ETH_TYPE_IP6:
+					#logger.debug("Padding: ETH_TYPE_IP6")
+					dlen_ip = unpack_H(buf[hlen + 4: hlen + 6])[0]  # Real data length
+					# logger.debug("eth.hlen=%d, data length based on header: %d" % (hlen, dlen_ip))
+
+					if 40 + dlen_ip < dlen:
+						# Padding found
+						self.padding = buf[hlen + 40 + dlen_ip:].tobytes()
+						#logger.debug("Got padding for IPv6: %r" % self.padding)
+						dlen = 40 + dlen_ip
+				elif eth_type == ETH_TYPE_LLDP:
+					#logger.debug("Padding: ETH_TYPE_LLDP")
+					# This is a bit redundant as we re-parse TLV when accessing the LLDP layer
+					dlen_lldp, _ = lldp.count_and_dissect_tlvs(buf[hlen:], onlylen=True)
+					self.padding = buf[hlen + dlen_lldp:].tobytes()
+					dlen = dlen_lldp
+				elif eth_type == ETH_TYPE_SP:
+					#logger.debug("Padding: ETH_TYPE_SP")
+					lacppdu_len = 110
+					self.padding = buf[hlen + lacppdu_len:].tobytes()
+					dlen = lacppdu_len
+			except:
+				# Could not extract padding info, assuming incomplete ethernet frame.
+				# Init of handler will take place after all.
+				pass
+		#logger.debug("len(buf)=%d, hlen=%d, len(higher)=%d" % (len(buf), hlen, dlen))
+		#logger.debug("Upper layer bytes will be: %r" % buf[hlen: hlen + dlen].tobytes())
+		return hlen, eth_type, buf[hlen: hlen + dlen]
+
+	def _update_fields(self):
+		self._update_higherlayer_id()
+
+	def bin(self, update_auto_fields=True):
+		# Padding needs to be placed at the very end
+		return pypacker.Packet.bin(self, update_auto_fields=update_auto_fields) + self.padding
+
+	def __len__(self):
+		return super().__len__() + len(self.padding)
+
+	def direction(self, other):
+		#logger.debug("checking direction: %s<->%s" % (self, other))
+		if self.dst == other.dst and self.src == other.src:
+			# Consider packet to itself: can be DIR_REV
+			return pypacker.Packet.DIR_SAME | pypacker.Packet.DIR_REV
+		if (self.dst == other.src and self.src == other.dst) or\
+			(self.dst == b"\xff\xff\xff\xff\xff\xff" and other.dst == self.src):  # broadcast
+			return pypacker.Packet.DIR_REV
+		return pypacker.Packet.DIR_UNKNOWN
+
+	def reverse_address(self):
+		self.dst, self.src = self.src, self.dst
+"""Ethernet Flow Control"""
+import logging
+
+from pypacker import pypacker, triggerlist
+from pypacker.structcbs import pack_H, unpack_H
+
+logger = logging.getLogger("pypacker")
+
+PAUSE_OPCODE	= 0x0001		# Pause frame IEEE 802.3x
+PFC_OPCODE	= 0x0101		# Priority Flow Control IEEE 802.1Qbb
+
+
+class FlowControl(pypacker.Packet):
+	__hdr__ = (
+		("opcode", "H", PAUSE_OPCODE),
+	)
+
+	def _dissect(self, buf):
+		if buf[:2] == b"\x01\x01":
+			ul_type = PFC_OPCODE
+		else:
+			ul_type = PAUSE_OPCODE
+		return 2, ul_type
+
+	class Pause(pypacker.Packet):
+		__hdr__ = (
+			("ptime", "H", 0x0000),
+		)
+
+	class PFC(pypacker.Packet):
+		__hdr__ = (
+			("ms", "B", 0),  # Most significant octet is reserved,set to zero
+			("ls", "B", 0),  # Least significant octet indicates time_vector parameter
+			("time", None, triggerlist.TriggerList),
+		)
+
+		# Conveniant access to ls field(bit representation via list)
+		# e.g. 221 -> [1, 1, 0, 1, 1, 1, 0, 1]
+		def _get_ls(self):
+			#return [(self.ls >> x) & 1 for x in reversed(range(8))]
+			return [int(bstr) for bstr in bin(self.ls)[2:]]
+
+		# e.g. [1, 1, 0, 1, 1, 1, 0, 1] -> 221
+		def _set_ls(self, value):
+			#self.ls = int("".join(map(str, value)), 2)
+			self.ls = int("".join(["%d" % bint for bint in value]), 2)
+		ls_list = property(_get_ls, _set_ls)
+
+		# Conveniant access to time field (decimal representation via list)
+		def _get_time(self):
+			return [unpack_H(x)[0] for x in self.time]
+
+		def _set_time(self, value):
+			self.time = [pack_H(x) for x in value]
+		time_list = property(_get_time, _set_time)
+
+		@staticmethod
+		def _get_times(buf):
+			times = []
+			for i in range(0, 16, 2):
+				times.append(buf[i:i + 2].tobytes())
+			return times
+
+		def _dissect(self, buf):
+			#logger.debug("Buf for PFC: %r" % buf.tobytes())
+			self.time(buf[2:], FlowControl.PFC._get_times)
+			return len(buf)
+
+	__handler__ = {
+		PAUSE_OPCODE: Pause,
+		PFC_OPCODE: PFC
+	}
+
+
+####################################################################
+#
+#
+#           DSHELL A THROUGH D SCRIPTS END
+#
+#
+###################################################################
+
+
+
+####################################################################
+#
+#
+#           DSHELL E THROUGH F SCRIPTS START
+#
+#
+###################################################################
+
+"""
+This output module converts plugin output into JSON and indexes it into
+an Elasticsearch datastore
+
+NOTE: This module requires the third-party 'elasticsearch' Python module
+"""
+
+class ElasticOutput(dshell.output.jsonout.JSONOutput):
+    """
+    Elasticsearch output module
+    Use with --output=elasticsearchout
+
+    It is recommended that it be run with some options set:
+        host:       server hosting the database (localhost)
+        port:       HTTP port listening (9200)
+        index:      name of index storing results ("dshell")
+        type:       the type for each alert ("alerts")
+
+    Example use:
+        decode --output=elasticout --oargs="index=dshellalerts" --oargs="type=netflowout" -d netflow ~/pcap/example.pcap
+    """
+
+    _DESCRIPTION = "Automatically insert data into an elasticsearch instance"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs.copy())
+
+        self.options = {}
+        self.options['host'] = kwargs.get('host', 'localhost')
+        self.options['port'] = int(kwargs.get('port', 9200))
+        self.options['index'] = kwargs.get('index', 'dshell')
+        self.options['type'] = kwargs.get('type', 'alerts')
+
+        self.es = Elasticsearch([self.options['host']], port=self.options['port'])
+
+    def write(self, *args, **kwargs):
+        "Converts alert's keyword args to JSON and indexes it into Elasticsearch datastore."
+        if args and 'data' not in kwargs:
+            kwargs['data'] = self.delimiter.join(map(str, args))
+
+        # Elasticsearch can't handle IPv6 (at time of writing)
+        # Just delete the ints and expand the string notation.
+        # Hopefully, it will be possible to perform range searches on this
+        # consistent IP string format.
+        try:
+            del kwargs['dipint']
+        except KeyError:
+            pass
+        try:
+            del kwargs['sipint']
+        except KeyError:
+            pass
+        try:
+            kwargs['dip'] = ipaddress.ip_address(kwargs['dip']).exploded
+        except KeyError:
+            pass
+        try:
+            kwargs['sip'] = ipaddress.ip_address(kwargs['sip']).exploded
+        except KeyError:
+            pass
+
+        jsondata = json.dumps(kwargs, ensure_ascii=self.ensure_ascii, default=self.json_default)
+#        from pprint import pprint
+#        pprint(jsondata)
+        self.es.index(index=self.options['index'], doc_type=self.options['type'], body=jsondata)
+
+obj = ElasticOutput
+
+
+"""
+Generates color-coded Screen/HTML output similar to Wireshark Follow Stream
+"""
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+
+    def __init__(self):
+        super().__init__(
+            name="Followstream",
+            author="amm/dev195",
+            description="Generates color-coded Screen/HTML output similar to Wireshark Follow Stream. Empty connections will be skipped.",
+            bpf="tcp",
+            output=ColorOutput(label=__name__),
+        )
+
+    def connection_handler(self, conn):
+        if conn.totalbytes > 0:
+            self.write(conn, **conn.info())
+            return conn
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+"""
+Errors
+======
+
+"""
+
+
+class GeoIP2Error(RuntimeError):
+    """There was a generic error in GeoIP2.
+
+    This class represents a generic error. It extends :py:exc:`RuntimeError`
+    and does not add any additional attributes.
+
+    """
+
+
+class AddressNotFoundError(GeoIP2Error):
+    """The address you were looking up was not found.
+
+    .. attribute:: ip_address
+
+      The IP address used in the lookup. This is only available for database
+      lookups.
+
+      :type: str
+
+    .. attribute:: network
+
+      The network associated with the error. In particular, this is the
+      largest network where no address would be found. This is only
+      available for database lookups.
+
+      :type: ipaddress.IPv4Network or ipaddress.IPv6Network
+
+    """
+
+    ip_address: Optional[str]
+    _prefix_len: Optional[int]
+
+    def __init__(
+        self,
+        message: str,
+        ip_address: Optional[str] = None,
+        prefix_len: Optional[int] = None,
+    ) -> None:
+        super().__init__(message)
+        self.ip_address = ip_address
+        self._prefix_len = prefix_len
+
+    @property
+    def network(self) -> Optional[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]]:
+        """The network for the error"""
+
+        if self.ip_address is None or self._prefix_len is None:
+            return None
+        return ipaddress.ip_network(f"{self.ip_address}/{self._prefix_len}", False)
+
+
+class AuthenticationError(GeoIP2Error):
+    """There was a problem authenticating the request."""
+
+
+class HTTPError(GeoIP2Error):
+    """There was an error when making your HTTP request.
+
+    This class represents an HTTP transport error. It extends
+    :py:exc:`GeoIP2Error` and adds attributes of its own.
+
+    :ivar http_status: The HTTP status code returned
+    :ivar uri: The URI queried
+    :ivar decoded_content: The decoded response content
+
+    """
+
+    def __init__(
+        self,
+        message: str,
+        http_status: Optional[int] = None,
+        uri: Optional[str] = None,
+        decoded_content: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+        self.uri = uri
+        self.decoded_content = decoded_content
+
+
+class InvalidRequestError(GeoIP2Error):
+    """The request was invalid."""
+
+
+class OutOfQueriesError(GeoIP2Error):
+    """Your account is out of funds for the service queried."""
+
+
+class PermissionRequiredError(GeoIP2Error):
+    """Your account does not have permission to access this service."""
+"""
+Goes through TCP connections and tries to find FTP control channels and
+associated data channels. Optionally, it will write out any file data it
+sees into a separate directory.
+
+If a data connection is seen, it prints a message indicating the user, pass,
+and file requested. If the --ftp_dump flag is set, it also dumps the file into the
+--ftp_outdir directory.
+"""
+
+# constants for channel type
+CTRL_CONN = 0
+DATA_CONN = 1
+
+class DshellPlugin(dshell.core.ConnectionPlugin):
+
+    def __init__(self):
+        super().__init__(
+            name="ftp",
+            description="alerts on FTP traffic and, optionally, rips files",
+            longdescription="""
+Goes through TCP connections and tries to find FTP control channels and
+associated data channels. Optionally, it will write out any file data it
+sees into a separate directory.
+
+If a data connection is seen, it prints a message indicating the user, pass,
+and file requested. If the --ftp_dump flag is set, it also dumps the file into the
+--ftp_outdir directory.
+""",
+            author="amm,dev195",
+            bpf="tcp",
+            output=AlertOutput(label=__name__),
+            optiondict={
+                "ports": {
+                    'help': 'comma-separated list of ports to watch for control connections (default: 21)',
+                    'metavar': 'PORT,PORT,PORT,[...]',
+                    'default': '21'},
+                "dump": {
+                    'action': 'store_true',
+                    'help': 'dump files from stream'},
+                "outdir": {
+                    'help': 'directory to write output files (default: "ftpout")',
+                    'metavar': 'DIRECTORY',
+                    'default': 'ftpout'}
+            }
+        )
+
+    def __update_bpf(self):
+        """
+        Dynamically change the BPF to allow processing of data transfer
+        channels.
+        """
+        dynfilters = []
+        for conn, metadata in self.conns.items():
+            try:
+                dynfilters += ["(host %s and host %s)" % metadata["tempippair"]]
+            except (KeyError, TypeError):
+                continue
+        for a, p in self.data_channel_map.keys():
+            dynfilters += ["(host %s and port %d)" % (a, p)]
+        self.bpf = "(%s) and ((%s)%s)" % (
+            self.original_bpf,
+            " or ".join( "port %d" % p for p in self.control_ports ),
+            " or " + " or ".join(dynfilters) if dynfilters else ""
+        )
+        self.recompile_bpf()
+
+    def premodule(self):
+        # dictionary containing metadata for connections
+        self.conns = {}
+        # dictionary mapping data channels (host, port) to their control channels
+        self.data_channel_map = {}
+        # ports used for control channels
+        self.control_ports = set()
+        # Original BPF without manipulation
+        self.original_bpf = self.bpf
+        # set control ports using user-provided info
+        for p in self.ports.split(','):
+            try:
+                self.control_ports.add(int(p))
+            except ValueError as e:
+                self.error("{!r} is not a valid port. Skipping.".format(p))
+        if not self.control_ports:
+            self.error("Could not find any control ports. At least one must be set for this plugin.")
+            sys.exit(1)
+
+        # create output directory
+        # break if it cannot be created
+        if self.dump and not os.path.exists(self.outdir):
+            try:
+                os.makedirs(self.outdir)
+            except (IOError, OSError) as e:
+                self.error("Could not create output directory: {!r}: {!s}"
+                           .format(self.outdir, e))
+                sys.exit(1)
+
+    def connection_init_handler(self, conn):
+        # Create metadata containers for any new connections
+        if conn.serverport in self.control_ports:
+            self.conns[conn.addr] = {
+                'mode': CTRL_CONN,
+                'user': '',
+                'pass': '',
+                'path': [],
+                'datachan': None,
+                'lastcommand': '',
+                'tempippair': None,
+                'filedata': None,
+                'file': ['', '', '']
+            }
+        elif self.dump and (conn.clientip, conn.clientport) in self.data_channel_map:
+            self.conns[conn.addr] = {
+                'mode': DATA_CONN,
+                'ctrlchan': self.data_channel_map[(conn.clientip, conn.clientport)],
+                'filedata': None
+            }
+        elif self.dump and (conn.serverip, conn.serverport) in self.data_channel_map:
+            self.conns[conn.addr] = {
+                'mode': DATA_CONN,
+                'ctrlchan': self.data_channel_map[(conn.serverip, conn.serverport)],
+                'filedata': None
+            }
+        elif self.dump:
+            # This is a data connection with an unknown control connection. It
+            # may be a passive mode transfer without known port info, yet.
+            self.conns[conn.addr] = {
+                'mode': DATA_CONN,
+                'ctrlchan': None,
+                'filedata': None
+            }
+
+    def connection_close_handler(self, conn):
+        # After data channel closes, store file content in control channel's
+        # 'filedata' field.
+        # Control channel will write it to disk after it determines the
+        # filename.
+        try:
+            info = self.conns[conn.addr]
+        except KeyError:
+            return
+
+        if self.dump and info['mode'] == DATA_CONN:
+            # find the associated control channel
+            if info['ctrlchan'] == None:
+                if (conn.clientip, conn.clientport) in self.data_channel_map:
+                    info['ctrlchan'] = self.data_channel_map[(conn.clientip, conn.clientport)]
+                if (conn.serverip, conn.serverport) in self.data_channel_map:
+                    info['ctrlchan'] = self.data_channel_map[(conn.serverip, conn.serverport)]
+            try:
+                ctrlchan = self.conns[info['ctrlchan']]
+            except KeyError:
+                return
+            # add data to control channel dictionary
+            for blob in conn.blobs:
+                if ctrlchan['filedata']:
+                    ctrlchan['filedata'] += blob.data
+                else:
+                    ctrlchan['filedata'] = blob.data
+            # update port list and data channel knowledge
+            if (conn.serverip, conn.serverport) == ctrlchan['datachan']:
+                del self.data_channel_map[ctrlchan['datachan']]
+                ctrlchan['datachan'] = None
+                self.__update_bpf()
+            if (conn.clientip, conn.clientport) == ctrlchan['datachan']:
+                del self.data_channel_map[ctrlchan['datachan']]
+                ctrlchan['datachan'] = None
+                self.__update_bpf()
+            del self.conns[conn.addr]
+
+        elif info['mode'] == CTRL_CONN:
+            # clear control channels if they've been alerted on
+            if info['file'] == None:
+                del self.conns[conn.addr]
+
+    def postmodule(self):
+        for addr, info in self.conns.items():
+            if self.dump and 'filedata' in info and info['filedata']:
+                origname = info['file'][0] + '_' + os.path.join(*info['file'][1:3])
+                outname = dshell.util.gen_local_filename(self.outdir, origname)
+                with open(outname, 'wb') as fh:
+                    fh.write(info['filedata'])
+                numbytes = len(info['filedata'])
+                info['filedata'] = None
+                info['outfile'] = outname
+                msg = 'User: %s, Pass: %s, %s File: %s (Incomplete: %d bytes written to %s)' % (info['user'], info['pass'], info['file'][0], os.path.join(*info['file'][1:3]), numbytes, os.path.basename(outname))
+                self.write(msg, **info)
+
+
+    def blob_handler(self, conn, blob):
+        try:
+            info = self.conns[conn.addr]
+        except KeyError:
+            # connection was not initialized correctly
+            # set the blob to hidden and move on
+            blob.hidden = True
+            return
+
+        if info['mode'] == DATA_CONN:
+            return conn, blob
+
+        try:
+            data = blob.data
+            data = data.decode('ascii')
+        except UnicodeDecodeError as e:
+            # Could not convert command data to readable ASCII
+            blob.hidden = True
+            return
+
+        if blob.direction == 'cs':
+            # client-to-server: try and get the command issued
+            if ' ' not in data.rstrip():
+                command = data.rstrip()
+                param = ''
+            else:
+                command, param = data.rstrip().split(' ', 1)
+            command = command.upper()
+            info['lastcommand'] = command
+
+            if command == 'USER':
+                info['user'] = param
+
+            elif command == 'PASS':
+                info['pass'] = param
+
+            elif command == 'CWD':
+                info['path'].append(param)
+
+            elif command == 'PASV' or command == 'EPSV':
+                if self.dump:
+                    # Temporarily store the pair of IP addresses
+                    # to open up the BPF filter until blob_handler processes
+                    # the response with the full IP/Port information.
+                    # Note: Due to the way blob processing works, we don't
+                    # get this information until after the data channel is
+                    # established.
+                    info['tempippair'] = tuple(
+                        sorted((conn.clientip, conn.serverip))
+                    )
+                    self.__update_bpf()
+
+            # For file transfers (including LIST), store tuple
+            # (Direction, Path, Filename) in info['file']
+            elif command == 'LIST':
+                if param == '':
+                    info['file'] = (
+                        'RETR', os.path.normpath(os.path.join(*info['path']))
+                        if len(info['path'])
+                        else '', 'LIST'
+                    )
+                else:
+                    info['file'] = (
+                        'RETR', os.path.normpath(os.path.join(os.path.join(*info['path']), param))
+                        if len(info['path'])
+                        else '', 'LIST'
+                    )
+            elif command == 'RETR':
+                info['file'] = (
+                    'RETR', os.path.normpath(os.path.join(*info['path']))
+                    if len(info['path'])
+                    else '', param
+                )
+            elif command == 'STOR':
+                info['file'] = (
+                    'STOR', os.path.normpath(os.path.join(*info['path']))
+                    if len(info['path'])
+                    else '', param
+                )
+
+        # Responses
+        else:
+            # Rollback directory change unless 2xx response
+            if info['lastcommand'] == 'CWD' and data[0] != '2':
+                info['path'].pop()
+            # Write out files upon resonse to transfer commands
+            if info['lastcommand'] in ('LIST', 'RETR', 'STOR'):
+                if self.dump and info['filedata']:
+                    origname = info['file'][0] + '_' + os.path.join(*info['file'][1:3])
+                    outname = dshell.util.gen_local_filename(self.outdir, origname)
+                    with open(outname, 'wb') as fh:
+                        fh.write(info['filedata'])
+                    numbytes = len(info['filedata'])
+                    info['filedata'] = None
+                    info['outfile'] = outname
+                    info.update(conn.info())
+                    msg = 'User: "{}", Pass: "{}", {} File: {} ({:,} bytes written to {})'.format(
+                        info['user'],
+                        info['pass'],
+                        info['file'][0],
+                        os.path.join(*info['file'][1:3]),
+                        numbytes,
+                        os.path.basename(outname)
+                    )
+                else:
+                    info.update(conn.info())
+                    msg = 'User: "{}", Pass: "{}", {} File: {}'.format(
+                        info['user'],
+                        info['pass'],
+                        info['file'][0],
+                        os.path.join(*info['file'][1:3])
+                    )
+                    if data[0] not in ('1','2'):
+                        msg += ' ({})'.format(data.rstrip())
+                info['ts'] = blob.ts
+                if (blob.sip == conn.sip):
+                    self.write(msg, **info, dir_arrow="->")
+                else:
+                    self.write(msg, **info, dir_arrow="<-")
+                info['file'] = None
+
+            # Handle EPSV mode port setting
+            if info['lastcommand'] == 'EPSV' and data[0] == '2':
+                ret = re.findall('\(\|\|\|\d+\|\)', data)
+                # TODO delimiters other than pipes
+                if ret:
+                    tport = int(ret[0].split('|')[3])
+                    info['datachan'] = (conn.serverip, tport)
+                    if self.dump:
+                        self.data_channel_map[(conn.serverip, tport)] = conn.addr
+                        info['tempippair'] = None
+                        self.__update_bpf()
+
+        # Look for ip/port information, assuming PSV response
+        ret = re.findall('\d+,\d+,\d+,\d+,\d+\,\d+', data)
+        if len(ret) == 1:
+            tip, tport = self.calculateTransfer(ret[0])    # transfer ip, transfer port
+            info['datachan'] = (tip, tport)                 # Update this control channel's knowledge of currently working data channel
+            if self.dump:
+                self.data_channel_map[(tip,tport)] = conn.addr     # Update plugin's global datachan knowledge
+                info['tempippair'] = None
+                self.__update_bpf()
+
+        return conn, blob
+
+
+    def calculateTransfer(self, val):
+        # calculate passive FTP data port
+        tmp = val.split(',')
+        ip = '.'.join(tmp[:4])
+        port = int(tmp[4])*256 + int(tmp[5])
+        return ip, port
+
+
+if __name__ == "__main__":
+    print(DshellPlugin())
+
+
