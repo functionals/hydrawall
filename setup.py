@@ -167,3 +167,216 @@ class CustomConfig(BuildConfig()):
     out = 'out'
     preserve_paths = True
     builtins = True
+
+
+# Copyright 2024 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Sets up TensorFlow Official Models."""
+import datetime
+import os
+import sys
+
+from setuptools import find_packages
+from setuptools import setup
+
+version = '2.17.0'
+tf_version = '2.17.0'  # Major version.
+
+project_name = 'tf-models-official'
+
+long_description = """The TensorFlow official models are a collection of
+models that use TensorFlow's high-level APIs.
+They are intended to be well-maintained, tested, and kept up to date with the
+latest TensorFlow API. They should also be reasonably optimized for fast
+performance while still being easy to read."""
+
+if '--project_name' in sys.argv:
+  project_name_idx = sys.argv.index('--project_name')
+  project_name = sys.argv[project_name_idx + 1]
+  sys.argv.remove('--project_name')
+  sys.argv.pop(project_name_idx)
+
+
+def _get_requirements(is_nightly=False):
+  """Parses requirements.txt file."""
+  install_requires_tmp = []
+  dependency_links_tmp = []
+  if is_nightly:
+    file_name = '../nightly_requirements.txt'
+  else:
+    file_name = '../requirements.txt'
+  with open(
+      os.path.join(os.path.dirname(__file__), file_name), 'r') as f:
+    for line in f:
+      package_name = line.strip()
+      # Skip empty line or comments starting with "#".
+      if not package_name or package_name[0] == '#':
+        continue
+      if package_name.startswith('-e '):
+        dependency_links_tmp.append(package_name[3:].strip())
+      else:
+        install_requires_tmp.append(package_name)
+  return install_requires_tmp, dependency_links_tmp
+
+if project_name == 'tf-models-nightly':
+  install_requires, dependency_links = _get_requirements(is_nightly=True)
+  version_split = version.split('.')
+  version_split[1] = str(int(version_split[1]) + 1)
+  version = '.'.join(version_split)
+  version += '.dev' + datetime.datetime.now().strftime('%Y%m%d')
+  install_requires.append('tf-nightly')
+  install_requires.append('tensorflow-text-nightly')
+else:
+  install_requires, dependency_links = _get_requirements()
+  install_requires.append(f'tensorflow~={tf_version}')
+  install_requires.append(f'tensorflow-text~={tf_version}')
+
+print('install_requires: ', install_requires)
+print('dependency_links: ', dependency_links)
+
+setup(
+    name=project_name,
+    version=version,
+    description='TensorFlow Official Models',
+    long_description=long_description,
+    author='Google Inc.',
+    author_email='packages@tensorflow.org',
+    url='https://github.com/tensorflow/models',
+    license='Apache 2.0',
+    packages=find_packages(exclude=[
+        'research*',
+        'official.pip_package*',
+        'official.benchmark*',
+        'official.colab*',
+        'official.recommendation.ranking.data.preprocessing*',
+    ]),
+    exclude_package_data={
+        '': ['*_test.py',],
+    },
+    install_requires=install_requires,
+    dependency_links=dependency_links,
+    python_requires='>=3.7',
+)
+#!/usr/bin/env python
+import os
+from setuptools import setup, find_packages
+
+
+def read(fname):
+    return open(os.path.join(os.path.dirname(__file__), fname)).read()
+
+setup(
+    name='pyja3',
+    version='1.1.0',
+    description='Generate JA3 fingerprints from PCAPs using Python.',
+    url="https://github.com/salesforce/ja3",
+    author="Tommy Stallings",
+    author_email="tommy.stallings2@gmail.com",
+    maintainer = "John B. Althouse",
+    maintainer_email = "jalthouse@salesforce.com",
+    license="BSD",
+    packages=find_packages(),
+    install_requires=['dpkt'],
+    long_description=read('README.rst'),
+    classifiers=[
+        'Development Status :: 4 - Beta',
+        'Intended Audience :: End Users/Desktop',
+        'License :: OSI Approved :: BSD License',
+        'Natural Language :: English',
+        'Programming Language :: Python',
+        'Topic :: Software Development :: Libraries'
+    ],
+    package_data={
+        'pyja3': [],
+    },
+    entry_points={
+        'console_scripts': [
+            'ja3 = ja3.ja3:main'
+        ]
+    },
+    keywords=['ja3', 'fingerprints', 'defender', 'ssl', 'packets']
+)
+import sys
+import os
+import glob
+from setuptools import setup, Extension
+
+PACKAGE_NAME = 'pcapy-ng'
+
+# You might want to change these to reflect your specific configuration
+include_dirs = []
+library_dirs = []
+libraries = []
+
+if sys.platform == 'win32':
+    if os.environ.get('WPDPACK_BASE'):
+        wpdpack = os.environ['WPDPACK_BASE']
+        include_dirs.append(os.path.join(wpdpack, 'Include'))
+        if sys.maxsize > 2**32:  # x64 Python interpreter
+            library_dirs.append(os.path.join(wpdpack, 'Lib', 'x64'))
+        else:  # x86 Python interpreter
+            library_dirs.append(os.path.join(wpdpack, 'Lib'))
+    else:
+        # WinPcap include files
+        include_dirs.append(r'c:\wpdpack\Include')
+        # WinPcap library files
+        if sys.maxsize > 2**32:  # x64 Python interpreter
+            library_dirs.append(r'c:\wpdpack\Lib\x64')
+        else:  # x86 Python interpreter
+            library_dirs.append(r'c:\wpdpack\Lib')
+    libraries = ['wpcap', 'packet', 'ws2_32']
+else:
+    libraries = ['pcap']
+
+
+# end of user configurable parameters
+macros = []
+sources = ['pcapdumper.cc',
+           'bpfobj.cc',
+           'pcapobj.cc',
+           'pcap_pkthdr.cc',
+           'pcapy.cc'
+           ]
+
+if sys.platform == 'win32':
+    sources.append(os.path.join('win32', 'dllmain.cc'))
+    macros.append(('WIN32', '1'))
+
+def read(fname):
+    return open(os.path.join(os.path.dirname(__file__), fname)).read()
+
+setup(name=PACKAGE_NAME,
+      version="1.0.9",
+      url="https://github.com/stamparm/pcapy-ng/",
+      author="Miroslav Stampar",
+      author_email="miroslav@sqlmap.org",
+      maintainer="Miroslav Stampar",
+      maintainer_email="miroslav@sqlmap.org",
+      platforms=["Unix", "Windows"],
+      description="Python pcap extension",
+      long_description=read('README'),
+      license="Apache",
+      ext_modules=[Extension(
+          name="pcapy",
+          sources=sources,
+          define_macros=macros,
+          include_dirs=include_dirs,
+          library_dirs=library_dirs,
+          libraries=libraries)],
+      #scripts=['tests/pcapytests.py', 'tests/96pings.pcap'],
+      data_files=[
+          (os.path.join('share', 'doc', PACKAGE_NAME), ['README', 'LICENSE', 'pcapy.html']),
+          (os.path.join('share', 'doc', PACKAGE_NAME, 'tests'), glob.glob('tests/*'))]
+      )
