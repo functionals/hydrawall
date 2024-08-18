@@ -7,7 +7,6 @@
 
 
 
-%START UPDATE
 
 
 
@@ -139,7 +138,7 @@ verb_p(Number,verb_p(Verb,NP))-->verb(Number,Verb),noun_p(Number,NP).
 determiner(determiner(a;the))-->[a];[the].
 
 
-%END UPDATE
+
 
 
 parse(Stream):-input(Stream),l:sentence(Stream,[])->!,nl,output(Stream).
@@ -565,7 +564,5 @@ lattice:edge([A,B];[B,C];[C,B])-:-Line,Node:-lattice:node(3),lattice:edge([A,B,C
 P-:-Q:-meaning(P,(Q)),(read(P),nl,write((Q)));(read(Q),nl,write((P))).
 P-:-Q:-copy_list(Q-:-P).
 Prime-:-not(divisible(not(X),X),X+1):-Prime.
-
-
 
 

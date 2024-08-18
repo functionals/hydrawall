@@ -1,3 +1,12 @@
+:-dynamic l:grab/2.
+:-dynamic l:letter/2.
+:-dynamic l:noun_p/0.
+:- dynamic l:prep_p/0.
+:-dynamic l:verb_p/0.
+:-dynamic l:word/4.
+:-dynamic l:grab_l/2.
+
+
 sentence:-copy_list(idea-:-command).
 sentence:-l:sentence.
 l:sentence:-((idea);(question;command)),((l:noun_p),l:prep_p,l:verb_p).
@@ -64,10 +73,3 @@ copy_list([]-:-[]).
 copy_list([X|Y]-:-[X|Z]):-copy_list(Y-:-Z),tell([a]).
 display(options):-start.
 start:-(options->options_display(49)).
-:-dynamic l:grab/2.
-:-dynamic l:letter/2.
-:-dynamic l:noun_p/0.
-:- dynamic l:prep_p/0.
-:-dynamic l:verb_p/0.
-:-dynamic l:word/4.
-:-dynamic l:grab_l/2.

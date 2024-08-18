@@ -2,7 +2,7 @@
 """
 Created on Fri Aug 16 06:00:45 2024
 
-@author: M
+@author: Ian Malloy
 """
 
 # -*- coding: utf-8 -*-

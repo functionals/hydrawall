@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Aug 14 15:26:08 2024
 
+<<<<<<< HEAD
 @author: Ian Malloy
 """
 from setuptools import find_packages, setup
@@ -380,3 +378,5 @@ setup(name=PACKAGE_NAME,
           (os.path.join('share', 'doc', PACKAGE_NAME), ['README', 'LICENSE', 'pcapy.html']),
           (os.path.join('share', 'doc', PACKAGE_NAME, 'tests'), glob.glob('tests/*'))]
       )
+=======
+>>>>>>> b9eb2eb0333c829874507f91ff2ba0af5f252dbb

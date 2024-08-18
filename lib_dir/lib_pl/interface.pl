@@ -24,7 +24,7 @@
 :- initialization(main,main).
 
 % prolog_edit:locate/3 to translate specification into a list of
-% locations. If there is more than one‘hit’, the user is asked to select
+% locations. If there is more than oneâ€˜hitâ€™, the user is asked to select
 % from the locations found
 
 prolog_edit:locate(

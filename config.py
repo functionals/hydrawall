@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Aug 15 22:31:34 2024
 
+<<<<<<< HEAD
 @author: Ian Malloy
 """
 import logging
@@ -273,3 +271,5 @@ texinfo_documents = [
 intersphinx_mapping = {
     "python": ("https://python.readthedocs.org/en/latest/", None),
 }
+=======
+>>>>>>> b9eb2eb0333c829874507f91ff2ba0af5f252dbb
