@@ -7,7 +7,6 @@
 
 
 
-%START UPDATE
 
 
 
@@ -139,7 +138,7 @@ verb_p(Number,verb_p(Verb,NP))-->verb(Number,Verb),noun_p(Number,NP).
 determiner(determiner(a;the))-->[a];[the].
 
 
-%END UPDATE
+
 
 
 parse(Stream):-input(Stream),l:sentence(Stream,[])->!,nl,output(Stream).
@@ -495,13 +494,13 @@ handle_request(Item) :-
 	send(B, check_modified_file).
 handle_request('close-server') :-
 	dde_unregister_service('PceEmacs'),
-	send(emacs, report, status, 'Closed DDE server').
+	send(@emacs, report, status, 'Closed DDE server').
 handle_request(Item) :-
 	format(user_error, 'PceEmacs DDE server: unknown request: ~q', [Item]),
 	fail.
 handle_request('close-server') :-
 	dde_unregister_service('PceEmacs'),
-	send(emacs, report, status, 'Closed DDE server').
+	send(@emacs, report, status, 'Closed DDE server').
 handle_request(Item) :-
 	format(user_error, 'PceEmacs DDE server: unknown request: ~pass', [Item]),
 	fail.
@@ -542,9 +541,9 @@ expand_path(Term, D) :-
 
 
 
-:- pce_global(prolog_full_stop,
+:- pce_global(@prolog_full_stop,
 	      new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
-:- pce_global(prolog_decl_regex,
+:- pce_global(@prolog_decl_regex,
 	      new(regex('^:-\\s*[a-z_]+'))).
 :- if(current_predicate(shell_register_dde/1)).
 :- endif.
@@ -565,7 +564,5 @@ lattice:edge([A,B];[B,C];[C,B])-:-Line,Node:-lattice:node(3),lattice:edge([A,B,C
 P-:-Q:-meaning(P,(Q)),(read(P),nl,write((Q)));(read(Q),nl,write((P))).
 P-:-Q:-copy_list(Q-:-P).
 Prime-:-not(divisible(not(X),X),X+1):-Prime.
-
-
 
 
