@@ -34,3 +34,15 @@ def dshell(command):
 if __name__ == "dshell":
     command = "dshell command:"
     dshell(command)
+
+##########################TODO
+#
+#
+#   Byte Strings for subprocess module
+#     between Dshell and tf, 
+#    tf and smart, 
+#     and Dshell/smart
+#
+#   Bitmaps instead of json
+#
+###################################
