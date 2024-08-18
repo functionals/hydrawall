@@ -1,6 +1,6 @@
 % Requires administrative read/write permissions for the OS
 
-
+:- initialization(main, main).
 % predicates defined at runtime
 %
 
@@ -24,13 +24,14 @@
 :- initialization(main,main).
 
 % prolog_edit:locate/3 to translate specification into a list of
-% locations. If there is more than oneâ€˜hitâ€™, the user is asked to select
+% locations. If there is more than one‘hit’, the user is asked to select
 % from the locations found
 
 prolog_edit:locate(
                 ['core.pl'],
                 ['inference_engine.pl'],
-                ['interface_buffer.pl']
+                ['interface_buffer.pl'],
+                ['janus.pl'].
             ).
 
 
