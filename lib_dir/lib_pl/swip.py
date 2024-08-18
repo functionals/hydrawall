@@ -1,111 +1,73 @@
 # -*- coding: utf-8 -*-
-
 """
 Created on Thu Aug 15 22:34:31 2024
 @author: Ian Malloy
 """
 
-"""
-Created on Thu Aug 15 22:34:31 2024
-@author: Ian Malloy
-"""
 import heapq
 import asyncio
+import subprocess
 import logging
 from optparse import OptionParser
-
-class Config:
-    """Configuration class for managing settings."""
-
-    def __init__(self):
-        self.prolog_path = 'swipl'
-        self.python_logging_level = logging.INFO
-        self.prolog_command = 'your_prolog_command_here'
-    
-    def get_prolog_path(self):
-        return self.prolog_path
-
-    def get_python_logging_level(self):
-        return self.python_logging_level
-
-    def get_prolog_command(self):
-        return self.prolog_command
-
-class SubprocessHandler:
-    """Class to handle subprocess commands with priority."""
-
-    def __init__(self):
-        self.task_queue = []
-        self.USER_INPUT_PRIORITY = 1
-        self.FILE_OPERATION_PRIORITY = 2
-
-    def add_task(self, priority, func):
-        """Add a task to the queue with a given priority."""
-        heapq.heappush(self.task_queue, (priority, func))
-
-    async def run(self):
-        """Process tasks from the queue."""
-        while self.task_queue:
-            priority, task = heapq.heappop(self.task_queue)
-            if callable(task):
-                await task()  # Execute the task
-
-    async def run_command(self, command):
-        """Run a command using subprocess and manage its output and errors."""
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            text=True
-        )
-        stdout, stderr = await process.communicate()
-        if process.returncode == 0:
-            return stdout
-        else:
-            raise RuntimeError(f"Command Error: {stderr}")
-
-    async def handle_command(self, command):
-        """Run the command and send output to a script."""
-        output = await self.run_command(command)
-        await self.write_output_to_file('hydrawall.py', output)
-
-    async def write_output_to_file(self, filename, output):
-        """Write output to a Python script."""
-        try:
-            with open(filename, 'a') as file:
-                file.write(output + '\n')
-        except Exception as e:
-            print(f"Failed to write to file: {e}")
+from config import Config
 
 class PrologHandler:
     def __init__(self, config):
         self.prolog_path = config.get_prolog_path()
-        self.subprocess_handler = SubprocessHandler()
     
-    async def send_command(self, command):
-        """Send a command to SWI-Prolog and handle its output."""
-        prolog_command = [self.prolog_path, '-q', '-c', command]
-        await self.subprocess_handler.handle_command(prolog_command)
+    def send_command(self, command):
+        """Send a command to SWI-Prolog and return the output."""
+        try:
+            process = subprocess.Popen(
+                [self.prolog_path, '-q'],  # Run SWI-Prolog in quiet mode
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            stdout, stderr = process.communicate(command)
+            if process.returncode == 0:
+                return stdout
+            else:
+                raise RuntimeError(f"Prolog Error: {stderr}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to execute Prolog command: {e}")
 
-async def run_prolog_command(prolog_script, command):
-    """Run a Prolog command by calling a Prolog script."""
+def run_prolog_command(prolog_script, command):
+    """
+    Run a Prolog command by calling a Prolog script using subprocess.
+    :param prolog_script: Path to the Prolog script.
+    :param command: The Prolog command or query to execute.
+    :return: The output of the Prolog command.
+    """
     prolog_command = ['swipl', prolog_script, '-g', command, '-t', 'halt']
-    subprocess_handler = SubprocessHandler()
-    await subprocess_handler.handle_command(prolog_command)
+    
+    try:
+        result = subprocess.run(prolog_command, capture_output=True, text=True)
+        if result.returncode == 0:
+            print("Prolog Output:", result.stdout)
+        else:
+            print("Prolog Error:", result.stderr)
+    except Exception as e:
+        print(f"Failed to run Prolog command: {e}")
 
 def write_string_to_file(filename, string):
-    """Write a string to a file synchronously."""
+    """Write a string to a file."""
     try:
         with open(filename, 'w') as file:
             file.write(string + '\n')
     except Exception as e:
         print(f"Failed to write to file: {e}")
 
-async def run_prolog_script(prolog_script):
-    """Run a Prolog script and write its output to a file."""
-    prolog_command = ['swipl', prolog_script]
-    subprocess_handler = SubprocessHandler()
-    await subprocess_handler.handle_command(prolog_command)
+def run_prolog_script(prolog_script):
+    """Run a Prolog script and print its output."""
+    try:
+        result = subprocess.run(['swipl', prolog_script], capture_output=True, text=True)
+        print(result.stdout)
+        if result.stderr:
+            print("Error:", result.stderr)
+    except Exception as e:
+        print(f"Failed to run Prolog script: {e}")
 
 def parse_args():
     """Parse command-line arguments."""
@@ -145,50 +107,170 @@ class KnowledgeBase:
         else:
             self.assert_fact(input_str.strip())
 
-    async def smart(self):
+    def smart(self):
         while True:
-            input_str = input("Enter definition as predication: ")
+            input_str = input("Enter query: ")
             if input_str.lower() == 'exit':
                 break
             self.process_input(input_str)
 
-async def main():
+def heapreplace(heap, item):
+    """Replace the smallest item with a new item in the heap."""
+    if item > heap[0]:
+        heapq.heapreplace(heap, item)
+    return heap
+
+def heappush(heap, item):
+    """Push a new item onto the heap."""
+    heapq.heappush(heap, item)
+
+def heappop(heap):
+    """Pop the smallest item off the heap."""
+    return heapq.heappop(heap)
+
+def heapify(heap):
+    """Transform a list into a heap."""
+    heapq.heapify(heap)
+
+def merge(*iterables, key=None, reverse=False):
+    """Merge multiple sorted iterables into a single sorted iterable."""
+    if reverse:
+        _heapify = heapq._heapify_max
+        _heappop = heapq._heappop_max
+        _heapreplace = heapq._heapreplace_max
+        direction = -1
+    else:
+        _heapify = heapq.heapify
+        _heappop = heapq.heappop
+        _heapreplace = heapq.heapreplace
+        direction = 1
+
+    h = []
+    for order, it in enumerate(map(iter, iterables)):
+        try:
+            next_item = it.__next__
+            h.append([next_item(), order * direction, next_item])
+        except StopIteration:
+            pass
+    _heapify(h)
+    while len(h) > 1:
+        try:
+            while True:
+                value, order, next_item = h[0]
+                yield value
+                s = h[0]
+                s[0] = next_item()
+                _heapreplace(h, s)
+        except StopIteration:
+            _heappop(h)
+    if h:
+        value, order, next_item = h[0]
+        yield value
+        yield from next_item.__self__
+
+def nsmallest(n, iterable, key=None):
+    """Find the n smallest elements in an iterable."""
+    if n == 1:
+        it = iter(iterable)
+        sentinel = object()
+        result = min(it, default=sentinel, key=key)
+        return [] if result is sentinel else [result]
+
+    try:
+        size = len(iterable)
+    except (TypeError, AttributeError):
+        pass
+    else:
+        if n >= size:
+            return sorted(iterable, key=key)[:n]
+
+    if key is None:
+        it = iter(iterable)
+        result = [(elem, i) for i, elem in zip(range(n), it)]
+        if not result:
+            return result
+        heapify(result)
+        top = result[0][0]
+        order = n
+        for elem in it:
+            if elem < top:
+                heapreplace(result, (elem, order))
+                top, _order = result[0]
+                order += 1
+        result.sort()
+        return [elem for elem, _order in result]
+
+    it = iter(iterable)
+    result = [(key(elem), i, elem) for i, elem in zip(range(n), it)]
+    if not result:
+        return result
+    heapify(result)
+    top = result[0][0]
+    order = n
+    for elem in it:
+        k = key(elem)
+        if k < top:
+            heapreplace(result, (k, order, elem))
+            top, _order, _elem = result[0]
+            order += 1
+    result.sort()
+    return [elem for k, _order, elem in result]
+
+def write_stream_to_file(file_path, stream_data):
+    """
+    Write the given stream data to an extensionless file.
+
+    :param file_path: The path to the extensionless file.
+    :param stream_data: The data stream to write to the file.
+    """
+    try:
+        with open(file_path, 'w') as file:
+            file.write(stream_data)
+        print(f"Data successfully written to {file_path}")
+    except Exception as e:
+        print(f"Failed to write to file: {e}")
+
+if __name__ == "__main__":
     options, _ = parse_args()
+    if options.command:
+        prolog_handler = PrologHandler(Config())
+        prolog_handler.send_command(options.command)
+    else:
+        print("No command specified. Use -c option to provide a Prolog command.")
+
+    # Example usage of PrologHandler
     config = Config()
     logging.basicConfig(level=config.get_python_logging_level())
-
     prolog_handler = PrologHandler(config)
-    subprocess_handler = SubprocessHandler()
-
-    if options.command:
-        subprocess_handler.add_task(subprocess_handler.FILE_OPERATION_PRIORITY, lambda: prolog_handler.send_command(options.command))
+    prolog_command = config.get_prolog_command()
+    result = prolog_handler.send_command(prolog_command)
+    print("Prolog Output:", result)
 
     # Example usage of Smart class
     smart_instance = Smart()
-    subprocess_handler.add_task(subprocess_handler.USER_INPUT_PRIORITY, smart_instance.smart_method)
+    smart_instance.smart_method()
+    smart_instance.janus_swi()
+    smart_instance.smart_static_method()
 
     # Example usage of KnowledgeBase class
     kb = KnowledgeBase()
-    subprocess_handler.add_task(subprocess_handler.USER_INPUT_PRIORITY, kb.smart)
+    kb.smart()
 
-    # File operations
+    # Example file operations
     filename = 'input.txt'
     prolog_script = 'prolog_script.pl'
     string_to_pass = 'Hello from Python!'
     
-    subprocess_handler.add_task(subprocess_handler.FILE_OPERATION_PRIORITY, lambda: write_string_to_file(filename, string_to_pass))
-    subprocess_handler.add_task(subprocess_handler.FILE_OPERATION_PRIORITY, lambda: run_prolog_script(prolog_script))
+    write_string_to_file(filename, string_to_pass)
+    run_prolog_script(prolog_script)
     
-    # Process tasks from the queue
-    await subprocess_handler.run()
+    # Example stream data write
+    file_path = 'data'
+    stream_data = "This is some example content for the extensionless file."
+    write_stream_to_file(file_path, stream_data)
 
-if __name__ == "__main__":
-    try:
-        # Check if there is already an event loop running
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            print("Event loop is already running. Use await for async operations.")
-        else:
-            asyncio.run(main())
-    except RuntimeError as e:
-        print(f"RuntimeError: {e}")
+    # Example heap operations
+    async def produce(queue, n_jobs):
+        for i in range(n_jobs):
+            await queue.put(i)
+            await asyncio.sleep()
