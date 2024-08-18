@@ -39,11 +39,11 @@ This project integrates advanced tools and techniques for network forensics, vul
 ### Network Forensics
 Run the CORE for network forensics analysis:
 
-###Train the TensorFlow model with Dshell.trainingpack
+### Train the TensorFlow model with Dshell.trainingpack
 
 
 
-###Run Vulnerability Analysis
+### Run Vulnerability Analysis
 
 # Supplements
 
