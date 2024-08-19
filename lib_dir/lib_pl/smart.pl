@@ -133,7 +133,69 @@ Prime -:- not(divisible(not(X), X), X + 1) :- Prime.
 
 
 
-% Locate a Prolog file and return its absolute path
+% Expand a lattice node with given parameters, considering the bound and solving status
+lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) -:-
+    Member,
+    Solved = Never
+    :- F =< Bound,
+       (lattice:bagof(M/C,
+          (s(N, M, C),
+           (~(Member) -> [M, P], Succ)),
+          !,
+          lattice:succlist(G, Succ, Ts),
+          lattice:bestf(Ts, Fl),
+          lattice:expand(P, t(N, Fl/G, Ts), Bound, Tree1, Solved, Sol)
+        ; Solved = Never)).
+
+% Define the minimum function for lattice with bounds
+lattice:min(X, Y, Z) -:-
+    Bound,
+    BF,
+    Bound1 :-
+    lattice:min(Bound, BF, Bound1);
+    (X, Y, Z).
+
+
+% Computes the minimum value among Bound, BF, and Bound1.
+lattice:min(X, Y, Z) -:- Bound, BF, Bound1 :- lattice:min(Bound, BF, Bound1); (X, Y, Z).
+
+
+    %Define an edge relation for a list of nodes with distance calculations
+lattice:edge([c]) -:-
+    Distance,
+    Prime1,
+    Prime2,
+    Prime3 :-
+    lattice:node(number(Distance), [Prime1, Prime2, Prime3], [a], [c]).
+
+% Define an edge relation for specific node sequences and distance calculations
+lattice:edge([A, B]; [B, C]; [C, B]) -:-
+    Line,
+    Node :-
+    lattice:node(3),
+    lattice:edge([A, B, C]),
+    lattice:distance((lattice:node + lattice:edge = Distance)),
+    lattice:matrix(Line, Node, Distance).
+
+
+% Expands a lattice with a given bound, tree, and solution.
+% It recursively explores the tree and updates the solution if a better fit is found.
+lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) -:-
+    Member, Solved = Never
+    :- F =< Bound,
+       (lattice:bagof(M/C), (s(N, M, C), (~(Member) -> [M, P], Succ)),
+        !, lattice:succlist(G, Succ, Ts),
+        lattice:bestf(Ts, Fl),
+        lattice:expand(P, t(N, Fl/G, Ts), Bound, Tree1, Solved, Sol);
+        Solved = Never).
+
+
+
+% Defines a node predicate where (X, Y, Z) is either a tuple of numbers from lattice:node/3 or (X, Y, Z).
+node(X, Y, Z) -:- (Number1; Number2; Number3) :- lattice:node(Number1, Number2, Number3); (X, Y, Z).
+
+
+%Locate a Prolog file and return its absolute path
 %
 locate_prolog_file(Spec, Path) :-
     absolute_file_name(Spec,
@@ -903,7 +965,6 @@ output(sentence) --> (sentence).  % Grammar rule for sentence output.
 
 % Namespace-specific parse and output rules
 output:parse(X, Y, Z) :- meaning(X, Y, Z).
-
 output:speech:-analyze(task).
 speech:output(form_w(_),(_)).
 
@@ -1165,8 +1226,8 @@ output(meaning(X,Y,Z),(define(X,Y,Z)|interpretation(P))):-output(X,Y,Z|P).
 output(sentence)-->(sentence_group).
 output(sentence)-->(sentence).
 
-output:parse(X,Y,Z):-meaning(X,Y,Z).
-output:speech:-analyze(task).
+
+
 
 
 
@@ -1251,42 +1312,28 @@ lattice:bestf([T|_], F) :-
 lattice:bestf([], 9999).  % Default value for an empty list
 
 % Expands the lattice based on current state and attributes
+% If goal is met, return the path
 lattice:expand(P, l(N, _), _, _, yes, [N|P]) :- lattice:goal(N).  % If goal is met, return the path
-lattice:expand(P, Tree, Bound, Tree1, Solved, Solution) :- P, Tree, Bound, Tree1, Solved, Solution.  % Base case
-lattice:expand(P, l(N, _), _, _, yes, [N|P]) :- lattice:goal(N).  % If goal is met, return the path
-lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) :-
-    F =< Bound; Solved = Never,  % Check if value is within bound or solution is never
-    (lattice:bagof(M/C), (s(N, M, C), (Member,(P;N,Tree1)),Never,!,false)),(smart:input(Sol)->(F/G)).
 
-% Expands a lattice with a given bound, tree, and solution.
-% It recursively explores the tree and updates the solution if a better fit is found.
-lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) -:-
-    Member, Solved = Never
-    :- F =< Bound,
-       (lattice:bagof(M/C), (s(N, M, C), (~(Member) -> [M, P], Succ)),
-        !, lattice:succlist(G, Succ, Ts),
-        lattice:bestf(Ts, Fl),
-        lattice:expand(P, t(N, Fl/G, Ts), Bound, Tree1, Solved, Sol);
-        Solved = Never).
+% Base case
+
+lattice:expand(P, Tree, Bound, Tree1, Solved, Solution) :- P, Tree, Bound, Tree1, Solved, Solution.
 
 
-
-% Defines a node predicate where (X, Y, Z) is either a tuple of numbers from lattice:node/3 or (X, Y, Z).
-node(X, Y, Z) -:- (Number1; Number2; Number3) :- lattice:node(Number1, Number2, Number3); (X, Y, Z).
-
-% Checks if lattice:matrix is in a state of 'pass', which depends on lattice:bestf/2 (best fit function).
-lattice:matrix(pass) :- lattice:bestf(_, _).
+lattice:expand(P, l(N, F/G), Bound, (Tree1,Member), Solved, Sol)
+:-
+    F =< Bound; Solved = Never,
+    lattice:bagof((M/C);Sol, (s(N, M, C;G), (Member,(P;N,Tree1))),Never,!,false),(smart:input).
 
 
 
 
-lattice:node(d([A+1=B])):-A,B.
-lattice:node(d([A+2=C])):-A,C.
-lattice:node(d([B+1=C])):-B,C.
-lattice:node(d([A+1=B])):-A,B.
-lattice:node(d([A+2=C])):-A,C.
-lattice:node(d([B+1=C])):-B,C.
-lattice:node(d([A+B=C])):-A,B,C.
+
+
+lattice:node(distance([A+1=B])):-A,B.
+lattice:node(distance([A+2=C])):-A,C.
+lattice:node(distanc([B+1=C])):-B,C.
+
 lattice:node(Triple_prime):-number(Triple_prime).
 lattice:node(Prime,X):- 0 is X mod X+1,not(Prime),!.
 lattice:node(X,Y,Z):-node(X,Y,Z).
@@ -1317,51 +1364,14 @@ lattice:min(Bound,BF,Bound1):-lattice:min(Bound,BF,Bound1).
 
 
 
-
-% Define a matrix relationship where a matrix is associated with a pass if it satisfies lattice:bestf(_, _)
-lattice:matrix(pass) :-
-    lattice:bestf(_, _).
-
-% Expand a lattice node with given parameters, considering the bound and solving status
-lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) -:-
-    Member,
-    Solved = Never
-    :- F =< Bound,
-       (lattice:bagof(M/C,
-          (s(N, M, C),
-           (~(Member) -> [M, P], Succ)),
-          !,
-          lattice:succlist(G, Succ, Ts),
-          lattice:bestf(Ts, Fl),
-          lattice:expand(P, t(N, Fl/G, Ts), Bound, Tree1, Solved, Sol)
-        ; Solved = Never)).
-
-% Define the minimum function for lattice with bounds
-lattice:min(X, Y, Z) -:-
-    Bound,
-    BF,
-    Bound1 :-
-    lattice:min(Bound, BF, Bound1);
-    (X, Y, Z).
+% Checks if lattice:matrix is in a state of 'pass', which depends on lattice:bestf/2 (best fit function).
+lattice:matrix(pass) :- lattice:bestf(_, _).
 
 
-% Computes the minimum value among Bound, BF, and Bound1.
-lattice:min(X, Y, Z) -:- Bound, BF, Bound1 :- lattice:min(Bound, BF, Bound1); (X, Y, Z).
 
 
-    %Define an edge relation for a list of nodes with distance calculations
-lattice:edge([c]) -:-
-    Distance,
-    Prime1,
-    Prime2,
-    Prime3 :-
-    lattice:node(number(Distance), [Prime1, Prime2, Prime3], [a], [c]).
 
-% Define an edge relation for specific node sequences and distance calculations
-lattice:edge([A, B]; [B, C]; [C, B]) -:-
-    Line,
-    Node :-
-    lattice:node(3),
-    lattice:edge([A, B, C]),
-    lattice:distance((lattice:node + lattice:edge = Distance)),
-    lattice:matrix(Line, Node, Distance).
+
+
+
+
