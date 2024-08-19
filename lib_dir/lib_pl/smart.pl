@@ -1,12 +1,457 @@
+
+%%% Custom Operators
 :-op(1200,xf,~).
 :-op(1190,xfx,:-).
 :-op(1000,xfy,-:-).
 :-op(100,xfy,and).
+
+
+% Entry point to handle file input
+:- initialization(main, main).
+:- initialization(main).
+
+%Write to a database
 :-assert(pass).
 :-assert(pass(_)).
+% Defines dynamic predicates that can be modified at runtime.
+:- dynamic l:grab/2.
+:- dynamic l:letter/2.
+:- dynamic l:noun_p/0.
+:- dynamic l:prep_p/0.
+:- dynamic l:verb_p/0.
+:- dynamic l:word/4.
+:- dynamic prolog:meta_goal/2.
+:- dynamic main/0.
+:- dynamic writefacts/0.
+:- dynamic source_location/2.
+:- dynamic opt_meta/2.
+:- dynamic opt_type/3.
+
+% Declare prolog:meta_goal/2 as multifile to allow definition across multiple files
+:- multifile prolog:meta_goal/2.
+
+% Load the edit library for debugging purposes
+:- use_module(library(edit)).
+% Define a placeholder for the prolog_edit:edit_source/1 predicate
+% that would typically invoke the user's preferred editor
+% prolog_edit:edit_source.
+
+$lattice :- consult(['hydrawall.py']),
+    consult([smart]).
+
+$smart :- goal.
+
+% Create a directory for updates if it doesn't exist
+make_directory(['updates']).
+
+% Redefine make_directory to check if the directory exists before creating it
+make_directory(['updates']) :- exists_directory(['updates']),
+    (make_directory(['updates']), !, fail).
+
+% Call make/0 and main/0 if the directory was created
+make_directory(['updates']) :- (make, main).
+
+% Convert a Prolog path to an OS-specific filename
+prolog_to_os_filename(['updates'], ['C:Users>[_]']).
+
+% Define another conversion for a different path format
+prolog_to_os_filename(['updates'], ['C:Users:[updates]']) :-
+    make_directory(['updates']).
+
+
+% Define the location of the last read term
+source_location(Spec, Path) :- locate_prolog_file(Spec, Path).
+
+% Set Prolog I/O streams for interactive behavior
+set_prolog_IO(In, Out, Error) :-
+    (   readfacts, In),
+    (   writefacts, Out),
+    main,
+    (fail) -> (nl, Error).
+
+
+% Define consult predicates for reading Prolog source files
+consult(start) :-
+    (['hydrawall.py']),
+    (['smart.pl']).
+
+consult(['output.pl']) :-
+    $argv_options(['output.pl'], ['updates'], string).
+
+consult(make_directory(['updates'])) :- consult(['output.pl']).
+
+% Open a resource as a stream and perform actions
+open_resource(set_prolog_IO(In, Out, Error), consult(In), readfacts) :-
+    make, write(Out; Error).
+
+open_resource(
+    (['hydrawall.py']),
+    ['smart']) :- main.
+
+% Parse command line arguments and handle options
+$argv_options(Argv, directory, string) :- current_prolog_flag(argv, Argv).
+
+% Define option types for command line arguments
+$opt_type(string, consult(library(lists)), atom).
+
+% Execute a goal and set the calling context to a module
+$goal :- consult(['hydrawall.py']),
+    open_resource(
+        ['core.pl'],
+        ['inference_engine.pl'],
+        ['interface_buffer.pl']
+    ).
+
+
+    % Locate a Prolog file and return its absolute path
+locate_prolog_file(Spec, Path) :-
+    absolute_file_name(Spec,
+                       [ file_type(prolog),
+                         access(read)
+                       ],
+                       Path).
+% Convert each character in the string to its binary representation
+string_to_binary_string(String, BinaryString) :-
+    string_codes(String, Codes),
+    maplist(code_to_binary_string, Codes, BinaryStrings),
+    atomics_to_string(BinaryStrings, BinaryString).
+
+% Convert a character code to a binary string
+code_to_binary_string(Code, [BinaryString|Padding]) :-
+    format(atom(BinaryString), '~8r', [Code]),
+    atom_length(BinaryString, Length),
+    Padding is 8 - Length,
+    format(atom(PaddedBinaryString), '~`0t~w~*|', [BinaryString, 8]),
+    atom_string(PaddedBinaryString, BinaryString).
+
+% Write the binary string to a file
+write_binary_to_file(BinaryString) :-
+    open('output.txt', write, Stream),
+    write(Stream, BinaryString),
+    close(Stream).
+
+main :-
+    write('Enter a string: '),
+    read_line_to_string(user_input, InputString),
+    string_to_binary_string(InputString, BinaryString),
+    write_binary_to_file(BinaryString),
+    halt.
 
 
 
+%%%%%%%% SMART Module
+
+smart(analyze(task)).
+smart(analyze(task)):-smart:input(_)->smart:output.
+smart(analyze(X;Y;Z)):-meaning:define(X,Y,Z).
+
+smart:input(W):-speech:output(form_w(X),(W|X)).
+smart:input(_):-input(_).
+smart:analyze(A):-parse:meaning(A).
+smart:analyze(task).
+
+
+smart:output:-(text,form_w(_)).
+smart:output:-(speech:output(form_w(_),(_))).
+smart:output:-parse(define(X,Y,Z)->meaning(X,Y,Z)).
+smart:output:-call([_]).
+smart:output(P):-definition(P);meaning(P).
+smart:output(X|Y):-l:letter(X|Y).
+smart:output(movement,speech).
+smart:output-->sentence.
+
+
+
+
+
+%%% Best First Search
+%%% Maps weights to lattice nodes
+%%% Weighted Nodes are Prime
+
+f( l(_,F/_),F).
+f( t(_,F/_,_),F).
+h(N,H):-N,H.
+s(N,M,C):-N,M,C.
+
+~(rationalize(Prime)):-(~(pass)),Prime.
+~(rational(Prime)):-Prime.
+~(pass):-set_random(number).
+~(P):-!,(fail),not(P);true.
+~(_):-not(_).
+~(pass):-not(pass).
+
+
+
+% Function to extract the 'F' component from a structured input
+f(l(_, F/_), F).  % Extracts 'F' from a term structured as l(_, F/_).
+f(t(_, F/_, _), F).  % Extracts 'F' from a term structured as t(_, F/_, _).
+
+% Defines a predicate for handling 'N' and 'H'
+h(N, H) :- N, H.  % Calls 'H' if 'N' succeeds.
+
+% Defines a predicate for handling 'N', 'M', and 'C'
+s(N, M, C) :- N, M, C.  % Calls 'N', 'M', and 'C' sequentially if they succeed.
+
+% Define the negation operator (~) for various predicates
+~(rationalize(Prime)) :- (~(pass)), Prime.  % Negates 'rationalize(Prime)' if 'pass' fails, and then checks 'Prime'.
+~(rational(Prime)) :- Prime.  % Negates 'rational(Prime)' if 'Prime' holds.
+~(pass) :- set_random(number).  % Sets a random number as a way to indicate 'pass'.
+~(P) :- !, (fail), not(P); true.  % Negates 'P' with a fail predicate; if 'P' is false, succeeds.
+~(_) :- not(_).  % General negation rule, if the argument does not hold, succeeds.
+~(pass) :- not(pass).  % Ensures 'pass' is not true.
+
+% Defines the 'pass' predicate
+pass :-
+	[Prime1, Prime2, Prime3],  % Defines a list of primes.
+	lattice:node(Prime1, Prime2, Prime3),  % Checks if a node with the given primes exists in the lattice.
+	source_file_chain(lattice:bagof(_)).  % Checks for a source file chain with the lattice bag.
+pass(Ch) :- pass, source_file_chain(Ch), lattice:bagof(Ch).  % Checks if 'pass' is true, then verifies the source file chain and lattice bag.
+pass:start :- pass.  % Defines the start condition for 'pass'.
+
+
+% Reads a sentence from input and processes it.
+getsentence(Wordlist) :- get0(Char), getrest(Char, Wordlist).
+getrest(46, []) :- !.
+getrest(32, Wordlist) :- !, getsentence(Wordlist).
+getrest(Letter, [Word | Wordlist]) :- getletters(Letter, Letters, Nextchar), name(Word, Letters), getrest(Nextchar, Wordlist).
+
+% Defines how to get letters from input.
+getletters(46, [], 46) :- !.
+getletters(32, [], 32) :- !.
+getletters(Let, [Let | Letters], Nextchar) :- get0(Char), getletters(Char, Letters, Nextchar).
+
+% Defines custom operator for a specific precedence.
+:- op(1200, xfy, (-:-)).
+% Define a meaning predicate that prints out the result of reading and writing variables
+P -:-
+    Q :-
+    meaning(P, (Q)),
+    (read(P), nl, write((Q)));
+    (read(Q), nl, write((P))).
+
+% Define a predicate to copy a list
+P -:-
+    Q :-
+    copy_list(Q, P).
+
+% Define a predicate for prime number generation (checks divisibility)
+Prime -:-
+    not(divisible(not(X), X), X + 1) :-
+    Prime.
+
+% Provides options to the user and handles input based on their choice.
+options :- write('Your Choice is either 1 or 2, enter 1 for sentence forms and 2 to stream input in English'), nl, options_display(49), options_choose(49), nl.
+options_display(49) :- sentence.
+options_display(49) :- get(49), nl.
+options_choose(49) :- read(49) -> l:sentence, display(l:sentence), options_choose_aux(49, 50, Input, (read(Input))).
+options_choose_aux(First, Last, Result, Char) :- Char >= First, Char =< Last, !, options_select(First, Char, Result).
+options_choose_aux(First, Last, Result, _) :- put(7), put(13), options, nl, display(First), nl, display(Last), nl, display(Result).
+
+% Recursively selects options based on user input.
+options_select(First, Char, Result) :- NewFirst is First + 1, options_select(NewFirst, Char, Result).
+
+
+% Define the prolog_edit:locate/3 predicate for locating files to be edited
+prolog_edit:locate(
+    ['core.pl'],
+    ['inference_engine.pl'],
+    ['interface_buffer.pl'],
+    ['janus.pl']
+).
+
+% Handle file reading and processing
+handle_file(File) :-
+    open(File, read, Stream),
+    read_line_to_string(Stream, String),
+    close(Stream),
+    format('Received string: ~w~n', [String]),
+    % Additional processing can be added here
+    true.
+
+
+% Define a DDE (Dynamic Data Exchange) connection with a matrix and handle requests
+'$dde_connect'(lattice:matrix) :- handle_request(pass).
+
+% Define modules for emacs_dde_server and win_register_emacs
+:- module(emacs_dde_server).
+:- module(emacs_dde_server), module(win_register_emacs).
+
+% Handle different types of requests based on the provided argument
+handle_request(pass) :-
+    % Connect to the DDE server with lattice:matrix
+    '$dde_connect'(lattice:matrix),
+    % Perform checks for lattice nodes and edges
+    (lattice:node(_, _, _),
+     lattice:edge(3)).
+
+handle_request(Item) :-
+    % If the item is an edit request, open the specified file in Emacs
+    atom_concat('edit ', WinFile, Item), !,
+    prolog_to_os_filename(File, WinFile),
+    new(B, emacs_buffer(File)),
+    send(B, open, tab),
+    send(B, check_modified_file).
+
+handle_request('close-server') :-
+    % Unregister the DDE service and report status
+    dde_unregister_service('PceEmacs'),
+    send(emacs, report, status, 'Closed DDE server').
+
+handle_request(Item) :-
+    % Handle unknown requests by reporting them and failing
+    format(user_error, 'PceEmacs DDE server: unknown request: ~q', [Item]),
+    fail.
+
+
+handle_request(Item) :-
+    % Another unknown request handling clause with incorrect formatting
+    format(user_error, 'PceEmacs DDE server: unknown request: ~pass', [Item]),
+    fail.
+
+% Create a chain of source files
+source_file_chain(Ch) :-
+    new(Ch, chain),
+    % Append all user source files to the chain
+    forall(user_source_file(X), send(Ch, append, X)),
+    % Sort the chain
+    send(Ch, sort).
+
+
+% Identify user source files by checking if they are not in the library directory
+user_source_file(F) :-
+    source_file(F),
+    \+ (lib_dir(D), atom_concat(D, _, F)).
+
+user_source_file(source_file(Z)) :-
+    lib_dir(Z),
+    expand_path(Z, source_file(Z)),
+    ignore_paths_from(Y),
+    expand_path(X, Z),
+    smart:analyze(X),
+    user_source_file(Y).
+
+
+% Specify directories to ignore
+ignore_paths_from(library).
+ignore_paths_from(pce_boot).
+
+% Determine library directories to exclude specific categories
+lib_dir(D) :-
+    ignore_paths_from(Category),
+    user:file_search_path(Category, X),
+    expand_path(X, D0),
+    absolute_file_name(D0, D). % Canonicalize the path
+
+
+% Expand paths by resolving symbolic references
+expand_path(X, X) :-
+    atomic(X), !.
+expand_path(Term, D) :-
+    Term =.. [New, Sub],
+    user:file_search_path(New, D0),
+    expand_path(D0, D1),
+    atomic_list_concat([D1, /, Sub], D).
+
+% Define regular expressions as global variables
+:- pce_global(prolog_full_stop,
+              new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
+:- pce_global(prolog_decl_regex,
+              new(regex('^:-\\s*[a-z_]+'))).
+
+% Conditional compilation based on the presence of shell_register_dde/1 predicate
+:- if(current_predicate(shell_register_dde/1)).
+:- endif.
+
+
+%% Algorithm for Mapping Primes to Nodes and Testing Primality
+
+% Define a node relation where (X, Y, Z) is a node if either of the numbers (Number1, Number2, Number3) match lattice:node(Number1, Number2, Number3)
+node(X, Y, Z) -:-
+    (Number1; Number2; Number3) :-
+        lattice:node(Number1, Number2, Number3);
+        (X, Y, Z).
+
+
+
+% Reconsult all changed source files
+% Set file path to consult
+%make :- consult([_]), readfacts.
+
+% Read facts from a file and print them
+readfacts :-
+    open('output.pl', read, In),
+    repeat,
+    read_line_to_codes(In, X), writef([_]),
+    writef(X), nl,
+    X=end_of_file, !,
+    nl,
+    close(In).
+
+readfacts :-
+    $goal,
+    @(main, goal),
+    consult(['output.pl']),
+    open_resource(['inference_engine.pl'], ['core.pl'], ['interface_buffer.pl']).
+
+% Write facts to a file
+writefacts :-
+    open('output.pl', write(variable_names([])), Out),
+    write(Out, []),
+    nl,
+    close(Out).
+
+% Main entry point for interactive use and debugging
+main :-
+    open('start', write, OS),
+    (   consult(In),
+        read(In, Eq),
+        write(Eq, Out), nl,
+        write(OS, Eq), nl(OS), nl(Out),
+        false
+        ;
+        close(OS)
+    ).
+
+main :-
+    handle_file('input.txt').
+
+main([]) :- main.
+
+main(Argv) :-
+    echo(Argv).
+
+% Helper predicates to print command line arguments
+echo([]) :- nl.
+echo([Last]) :- !,
+    write(Last), nl.
+echo([H|T]) :-
+    write(H), write(' '),
+    echo(T).
+
+% Define resources for Prolog programs
+resource(string, ['inference_engine.pl'], exclude(['interface.pl'])).
+
+% Exclude elements from a list based on a condition
+exclude(goal, ['interface_buffer.pl'], ['core.pl']).
+
+% Define meta-goal processing
+prolog:meta_goal(parse|[G], [G+1]) :- goal.
+
+% Define a goal for stemming words with a given algorithm
+goal :-
+    snowball(Goal, In, Stem),
+    snowball_current_algorithm(['interface_buffer.pl']),
+    porter_stem(In, Stem),
+    exclude(Goal, Stem, In).
+
+
+
+
+% Defines how to handle input, including getting sentences and displaying information.
+input(Wordlist) :- getsentence(Wordlist).
+input(P) :- (P:Q), display(Q).
+input(_) :- assert((_)).
+input(getsentence) :- l:sentence(input, objective).
 
 
 % Rule to handle various types of input
@@ -61,6 +506,92 @@ unknown(input(Vision, Sound, Text)) :- input(unknown(Vision, Sound, Text)).  % H
 unknown(X, Y, Z) :- define(X, Y, Z); meaning(X, Y, Z).  % Handles unknown input with definition or meaning.
 unknown(X, Y, Z) :- stream_input:(X, Y, Z).  % Handles unknown input with stream input.
 unknown(X, Y, Z) :- input(X, Y, Z).  % Handles unknown input with input.
+
+
+
+
+% Defines the structure of a sentence using the `l:sentence` predicate.
+% A sentence can be either an idea or a question/command followed by noun phrases, prepositional phrases, and verb phrases.
+l:sentence :- ((idea); (question; command)), ((l:noun_p), l:prep_p, l:verb_p).
+l:sentence :- read(49).
+l:sentence :- objective(_).
+l:sentence :- (l:noun_p, l:verb_p); ((l:noun_p), (l:prep_p), (l:word)); ((l:verb), (l:noun_p), (l:prep_p), (l:word)).
+
+% Defines a sentence in terms of a noun phrase and a verb phrase with an optional number argument.
+l:sentence(Number) --> l:noun_p(Number), l:verb_p(Number).
+
+% Defines how to convert a list of words and a string into a sentence.
+l:sentence(Wordlist, String) :- l:grab(l:sentence, l:word(Wordlist, String, objective)).
+l:sentence(Wordlist, String) :- l:word(Wordlist, input, String).
+l:sentence(Wordlist, String) :- getsentence(Wordlist), objective(String | Wordlist).
+
+% Defines how to construct a sentence using a noun phrase and a verb phrase or various combinations of noun phrases, prepositional phrases, and verbs.
+l:sentence --> (l:noun_p, l:verb_p); ((l:noun_p), (l:prep_p), l:word); ((l:verb), (l:noun_p), (l:prep_p), (l:word)).
+
+% Defines a sentence as either a copy of a list with the structure `idea-:-command`, or as a sentence recognized by the `l:sentence` predicate.
+sentence :- copy_list(idea-:-command).
+sentence :- l:sentence.
+
+
+% Defines how to process words, including letters and their combinations.
+l:word(Char | ((Char, String); Rest)) --> l:letter(Char | String, Char), l:grab_l((Char | Rest, Rest), (Char | String, String)), form_w(Char | String, String).
+
+% Defines verb phrases as consisting of a verb followed by a noun phrase.
+l:verb_p --> l:verb, l:noun_p.
+l:verb_p(Number) --> l:verb(Number), l:noun_p(Number).
+
+% Defines noun phrases, which can include determiners and nouns.
+l:noun_p --> (l:determiner -> l:noun).
+l:noun_p(Number) --> l:determiner(Number), l:noun(Number).
+
+% Defines determiners as either 'a' or 'the'.
+l:determiner --> [a]; [the].
+
+% Defines nouns as names, persons, places, things, or ideas.
+l:noun --> ([name]; [person]); [place]; [thing]; [idea].
+l:noun_pr --> [name], [place], [thing].
+
+% Defines singular and plural nouns with respective determiners.
+l:noun(singular) --> (l:determiner -> [a]).
+l:noun(plural) --> (l:determiner -> [the]).
+
+% Defines verbs as actions, states, or being.
+l:verb --> [action]; [state]; [being].
+
+% Defines prepositional phrases as a preposition followed by either noun phrases, nouns, or further prepositional phrases.
+l:prep_p --> l:prep, ((l:noun_p); (l:noun); (l:prep, l:noun_pr)).
+
+% Defines prepositions as 'in', 'to', 'with', 'into', or 'by'.
+l:prep --> [in]; [to]; [with]; [into]; [by].
+
+% Defines how to process and grab parts of a word.
+l:grab_l(Char | String, String) --> form_w(Char | String, String).
+l:grab_l(X, Y) --> form_w(X, Y).
+
+% Outputs an answer, including writing the answer to the user.
+l:output(Answer) :- l:output(Answer), write(Answer).
+l:output(_) :- question, call(l:sentence).
+
+% Defines verb phrases in terms of noun phrases.
+l:verb_p(Number) :- l:noun_p(Number).
+l:noun_p(Number) :- l:verb_p(Number).
+
+% Defines how to write determiners and verbs.
+l:determiner(X, Y, Z) :- write(X; Y; Z).
+l:verb(X, Y, Z) :- write(X; Y; Z).
+
+% Defines verbs with specific parameters.
+l:verb :- l:verb(_, _, _).
+
+% Defines how to process words and their letters.
+l:word(X, Y) :- l:letter(Y | X, Y).
+l:word :- l:word(input, getletters).
+
+% Defines how to process letters and their sequences.
+l:letter(Y, X, Z, P) :- l:grab_l(Y | X, X); l:grab_l(X | Z, Z); l:grab_l(Z | P, P).
+
+% Defines a form of word processing, including handling strings and sentences.
+form_w(Char | String, String) --> l:word(Char | String, String), l:sentence(String).
 
 % Defines various sentence structures
 sentence :- [_].  % Matches a single element list as a sentence.
@@ -222,6 +753,14 @@ goal((X, Y, Z) | P) :- output((X, Y, Z) | P).  % Handles goals with output.
 goal(P) :- unknown(X, Y, Z), (parse((X, Y, Z) | P)).  % Handles goals with parsing of unknown terms.
 goal(X, Y, Z) :- define(X, Y, Z).  % Handles goals with definition.
 
+% Defines different types of sentences including ideas, information, questions, and commands.
+idea :- information; question; command.
+information :- l:sentence.
+question :- l:output(answer).
+command :- l:sentence, task.
+task :- objective(task); command.
+objective(X) :- input(X = task).
+
 % Output handling
 output(_) :- stream_input -> smart:output.  % Handles output with smart output if stream input is present.
 output(P) :- meaning(P).  % Outputs based on meaning.
@@ -262,35 +801,6 @@ smart:output --> sentence.  % Grammar rule for generating output as a sentence.
 
 % Defines output behavior for speech in a certain form
 speech:output(form_w(_),(_)).  % Defines a speech output in a specific format involving form_w and a placeholder.
-
-% Function to extract the 'F' component from a structured input
-f(l(_, F/_), F).  % Extracts 'F' from a term structured as l(_, F/_).
-f(t(_, F/_, _), F).  % Extracts 'F' from a term structured as t(_, F/_, _).
-
-% Defines a predicate for handling 'N' and 'H'
-h(N, H) :- N, H.  % Calls 'H' if 'N' succeeds.
-
-% Defines a predicate for handling 'N', 'M', and 'C'
-s(N, M, C) :- N, M, C.  % Calls 'N', 'M', and 'C' sequentially if they succeed.
-
-% Define the negation operator (~) for various predicates
-~(rationalize(Prime)) :- (~(pass)), Prime.  % Negates 'rationalize(Prime)' if 'pass' fails, and then checks 'Prime'.
-~(rational(Prime)) :- Prime.  % Negates 'rational(Prime)' if 'Prime' holds.
-~(pass) :- set_random(number).  % Sets a random number as a way to indicate 'pass'.
-~(P) :- !, (fail), not(P); true.  % Negates 'P' with a fail predicate; if 'P' is false, succeeds.
-~(_) :- not(_).  % General negation rule, if the argument does not hold, succeeds.
-~(pass) :- not(pass).  % Ensures 'pass' is not true.
-
-% Defines the 'pass' predicate
-pass :- 
-	[Prime1, Prime2, Prime3],  % Defines a list of primes.
-	lattice:node(Prime1, Prime2, Prime3),  % Checks if a node with the given primes exists in the lattice.
-	source_file_chain(lattice:bagof(_)).  % Checks for a source file chain with the lattice bag.
-
-pass(Ch) :- pass, source_file_chain(Ch), lattice:bagof(Ch).  % Checks if 'pass' is true, then verifies the source file chain and lattice bag.
-
-pass:start :- pass.  % Defines the start condition for 'pass'.
-
 
 
 % Define a bag of elements M/C, which could be used to store and manage nodes and their attributes in the lattice
@@ -470,7 +980,7 @@ node(X, Y, Z) :- (Number1; Number2; Number3) :- lattice:node(Number1, Number2, N
 % Checks if lattice:matrix is in a state of 'pass', which depends on lattice:bestf/2 (best fit function).
 lattice:matrix(pass) :- lattice:bestf(_, _).
 
-% Expands a lattice with a given bound, tree, and solution. 
+% Expands a lattice with a given bound, tree, and solution.
 % It recursively explores the tree and updates the solution if a better fit is found.
 lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) :-
     Member, Solved = Never
@@ -484,7 +994,7 @@ lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) :-
 % Computes the minimum value among Bound, BF, and Bound1.
 lattice:min(X, Y, Z) :- Bound, BF, Bound1 :- lattice:min(Bound, BF, Bound1); (X, Y, Z).
 
-% Defines an edge for the case where the edge is represented by a single element [c] 
+% Defines an edge for the case where the edge is represented by a single element [c]
 % and its distance and prime nodes are determined by lattice:node/3.
 lattice:edge([c]) :- Distance, Prime1, Prime2, Prime3 :- lattice:node(number(Distance), [Prime1, Prime2, Prime3], [a], [c]).
 
@@ -760,64 +1270,6 @@ output:parse(X,Y,Z):-meaning(X,Y,Z).
 output:speech:-analyze(task).
 
 
-%%%%%%%% SMART Class
-
-smart(analyze(task)).
-smart(analyze(task)):-smart:input(_)->smart:output.
-smart(analyze(X;Y;Z)):-meaning:define(X,Y,Z).
-
-smart:input(W):-speech:output(form_w(X),(W|X)).
-smart:input(_):-input(_).
-smart:analyze(A):-parse:meaning(A).
-smart:analyze(task).
-
-
-smart:output:-(text,form_w(_)).
-smart:output:-(speech:output(form_w(_),(_))).
-smart:output:-parse(define(X,Y,Z)->meaning(X,Y,Z)).
-smart:output:-call([_]).
-smart:output(P):-definition(P);meaning(P).
-smart:output(X|Y):-l:letter(X|Y).
-smart:output(movement,speech).
-smart:output-->sentence.
-
-
-speech:output(form_w(_),(_)).
-
-
-%%% Best First Search
-%%% Maps weights to lattice nodes
-%%% Weighted Nodes are Prime
-
-f( l(_,F/_),F).
-f( t(_,F/_,_),F).
-h(N,H):-N,H.
-s(N,M,C):-N,M,C.
-
-~(rationalize(Prime)):-(~(pass)),Prime.
-~(rational(Prime)):-Prime.
-~(pass):-set_random(number).
-~(P):-!,(fail),not(P);true.
-~(_):-not(_).
-~(pass):-not(pass).
-
-
-
-
-
-
-
-pass:-
-	[Prime1,Prime2,Prime3],
-	lattice:node(Prime1,Prime2,Prime3),
-	source_file_chain(lattice:bagof(_)).
-pass(Ch):-pass,source_file_chain(Ch),lattice:bagof(Ch).
-pass:start:-pass.
-
-
-
-
-
 lattice:bagof(M/C):-M,C.
 
 
@@ -988,479 +1440,57 @@ lattice:min(Bound,BF,Bound1):-lattice:min(Bound,BF,Bound1).
 
 
 
-% Define a DDE (Dynamic Data Exchange) connection with a matrix and handle requests
-'$dde_connect'(lattice:matrix) :- handle_request(pass).
-
-% Define modules for emacs_dde_server and win_register_emacs
-:- module(emacs_dde_server).
-:- module(emacs_dde_server), module(win_register_emacs).
-
-% Handle different types of requests based on the provided argument
-handle_request(pass) :- 
-    % Connect to the DDE server with lattice:matrix
-    '$dde_connect'(lattice:matrix),
-    % Perform checks for lattice nodes and edges
-    (lattice:node(_, _, _), 
-     lattice:edge(3)).
-
-handle_request(Item) :-
-    % If the item is an edit request, open the specified file in Emacs
-    atom_concat('edit ', WinFile, Item), !,
-    prolog_to_os_filename(File, WinFile),
-    new(B, emacs_buffer(File)),
-    send(B, open, tab),
-    send(B, check_modified_file).
-
-handle_request('close-server') :-
-    % Unregister the DDE service and report status
-    dde_unregister_service('PceEmacs'),
-    send(@emacs, report, status, 'Closed DDE server').
-
-handle_request(Item) :-
-    % Handle unknown requests by reporting them and failing
-    format(user_error, 'PceEmacs DDE server: unknown request: ~q', [Item]),
-    fail.
-
-
-handle_request(Item) :-
-    % Another unknown request handling clause with incorrect formatting
-    format(user_error, 'PceEmacs DDE server: unknown request: ~pass', [Item]),
-    fail.
-
-% Create a chain of source files
-source_file_chain(Ch) :-
-    new(Ch, chain),
-    % Append all user source files to the chain
-    forall(user_source_file(X), send(Ch, append, X)),
-    % Sort the chain
-    send(Ch, sort).
-
-
-% Identify user source files by checking if they are not in the library directory
-user_source_file(F) :-
-    source_file(F),
-    \+ (lib_dir(D), atom_concat(D, _, F)).
-
-user_source_file(source_file(Z)) :-
-    lib_dir(Z),
-    expand_path(Z, source_file(Z)),
-    ignore_paths_from(Y),
-    expand_path(X, Z),
-    smart:analyze(X),
-    user_source_file(Y).
-
-
-% Specify directories to ignore
-ignore_paths_from(library).
-ignore_paths_from(pce_boot).
-
-% Determine library directories to exclude specific categories
-lib_dir(D) :-
-    ignore_paths_from(Category),
-    user:file_search_path(Category, X),
-    expand_path(X, D0),
-    absolute_file_name(D0, D). % Canonicalize the path
-
-
-% Expand paths by resolving symbolic references
-expand_path(X, X) :-
-    atomic(X), !.
-expand_path(Term, D) :-
-    Term =.. [New, Sub],
-    user:file_search_path(New, D0),
-    expand_path(D0, D1),
-    atomic_list_concat([D1, /, Sub], D).
-
-% Define regular expressions as global variables
-:- pce_global(@prolog_full_stop,
-              new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
-:- pce_global(@prolog_decl_regex,
-              new(regex('^:-\\s*[a-z_]+'))).
-
-% Conditional compilation based on the presence of shell_register_dde/1 predicate
-:- if(current_predicate(shell_register_dde/1)).
-:- endif.
-
-
-%% Algorithm for Mapping Primes to Nodes and Testing Primality
-
-% Define a node relation where (X, Y, Z) is a node if either of the numbers (Number1, Number2, Number3) match lattice:node(Number1, Number2, Number3)
-node(X, Y, Z) :- 
-    (Number1; Number2; Number3) :- 
-        lattice:node(Number1, Number2, Number3); 
-        (X, Y, Z).
-
 % Define a matrix relationship where a matrix is associated with a pass if it satisfies lattice:bestf(_, _)
-lattice:matrix(pass) :- 
+lattice:matrix(pass) :-
     lattice:bestf(_, _).
 
 % Expand a lattice node with given parameters, considering the bound and solving status
-lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) :-
-    Member, 
+lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) -:-
+    Member,
     Solved = Never
     :- F =< Bound,
-       (lattice:bagof(M/C, 
-          (s(N, M, C), 
-           (~(Member) -> [M, P], Succ)), 
-          !, 
+       (lattice:bagof(M/C,
+          (s(N, M, C),
+           (~(Member) -> [M, P], Succ)),
+          !,
           lattice:succlist(G, Succ, Ts),
           lattice:bestf(Ts, Fl),
           lattice:expand(P, t(N, Fl/G, Ts), Bound, Tree1, Solved, Sol)
         ; Solved = Never)).
 
 % Define the minimum function for lattice with bounds
-lattice:min(X, Y, Z) :- 
-    Bound, 
-    BF, 
-    Bound1 :- 
-    lattice:min(Bound, BF, Bound1); 
+lattice:min(X, Y, Z) -:-
+    Bound,
+    BF,
+    Bound1 :-
+    lattice:min(Bound, BF, Bound1);
     (X, Y, Z).
 
 % Define an edge relation for a list of nodes with distance calculations
-lattice:edge([c]) :- 
-    Distance, 
-    Prime1, 
-    Prime2, 
-    Prime3 :- 
+lattice:edge([c]) -:-
+    Distance,
+    Prime1,
+    Prime2,
+    Prime3 :-
     lattice:node(number(Distance), [Prime1, Prime2, Prime3], [a], [c]).
 
 % Define an edge relation for specific node sequences and distance calculations
-lattice:edge([A, B]; [B, C]; [C, B]) :- 
-    Line, 
-    Node :- 
-    lattice:node(3), 
-    lattice:edge([A, B, C]), 
-    lattice:distance((lattice:node + lattice:edge = Distance)), 
+lattice:edge([A, B]; [B, C]; [C, B]) -:-
+    Line,
+    Node :-
+    lattice:node(3),
+    lattice:edge([A, B, C]),
+    lattice:distance((lattice:node + lattice:edge = Distance)),
     lattice:matrix(Line, Node, Distance).
 
-% Define a meaning predicate that prints out the result of reading and writing variables
-P :- 
-    Q :- 
-    meaning(P, (Q)), 
-    (read(P), nl, write((Q))); 
-    (read(Q), nl, write((P))).
 
-% Define a predicate to copy a list
-P :- 
-    Q :- 
-    copy_list(Q, P).
+speech:output(form_w(_),(_)).
 
-% Define a predicate for prime number generation (checks divisibility)
-Prime :- 
-    not(divisible(not(X), X), X + 1) :- 
-    Prime.
 
-% Defines a sentence as either a copy of a list with the structure `idea-:-command`, or as a sentence recognized by the `l:sentence` predicate.
-sentence :- copy_list(idea-:-command).
-sentence :- l:sentence.
 
-% Defines the structure of a sentence using the `l:sentence` predicate. 
-% A sentence can be either an idea or a question/command followed by noun phrases, prepositional phrases, and verb phrases.
-l:sentence :- ((idea); (question; command)), ((l:noun_p), l:prep_p, l:verb_p).
-l:sentence :- read(49).
-l:sentence :- objective(_).
-l:sentence :- (l:noun_p, l:verb_p); ((l:noun_p), (l:prep_p), (l:word)); ((l:verb), (l:noun_p), (l:prep_p), (l:word)).
 
-% Defines a sentence in terms of a noun phrase and a verb phrase with an optional number argument.
-l:sentence(Number) --> l:noun_p(Number), l:verb_p(Number).
 
-% Defines how to convert a list of words and a string into a sentence.
-l:sentence(Wordlist, String) :- l:grab(l:sentence, l:word(Wordlist, String, objective)).
-l:sentence(Wordlist, String) :- l:word(Wordlist, input, String).
-l:sentence(Wordlist, String) :- getsentence(Wordlist), objective(String | Wordlist).
 
-% Defines how to construct a sentence using a noun phrase and a verb phrase or various combinations of noun phrases, prepositional phrases, and verbs.
-l:sentence --> (l:noun_p, l:verb_p); ((l:noun_p), (l:prep_p), l:word); ((l:verb), (l:noun_p), (l:prep_p), (l:word)).
 
-% Defines how to process words, including letters and their combinations.
-l:word(Char | ((Char, String); Rest)) --> l:letter(Char | String, Char), l:grab_l((Char | Rest, Rest), (Char | String, String)), form_w(Char | String, String).
 
-% Defines verb phrases as consisting of a verb followed by a noun phrase.
-l:verb_p --> l:verb, l:noun_p.
-l:verb_p(Number) --> l:verb(Number), l:noun_p(Number).
-
-% Defines noun phrases, which can include determiners and nouns.
-l:noun_p --> (l:determiner -> l:noun).
-l:noun_p(Number) --> l:determiner(Number), l:noun(Number).
-
-% Defines determiners as either 'a' or 'the'.
-l:determiner --> [a]; [the].
-
-% Defines nouns as names, persons, places, things, or ideas.
-l:noun --> ([name]; [person]); [place]; [thing]; [idea].
-l:noun_pr --> [name], [place], [thing].
-
-% Defines singular and plural nouns with respective determiners.
-l:noun(singular) --> (l:determiner -> [a]).
-l:noun(plural) --> (l:determiner -> [the]).
-
-% Defines verbs as actions, states, or being.
-l:verb --> [action]; [state]; [being].
-
-% Defines prepositional phrases as a preposition followed by either noun phrases, nouns, or further prepositional phrases.
-l:prep_p --> l:prep, ((l:noun_p); (l:noun); (l:prep, l:noun_pr)).
-
-% Defines prepositions as 'in', 'to', 'with', 'into', or 'by'.
-l:prep --> [in]; [to]; [with]; [into]; [by].
-
-% Defines how to process and grab parts of a word.
-l:grab_l(Char | String, String) --> form_w(Char | String, String).
-l:grab_l(X, Y) --> form_w(X, Y).
-
-% Outputs an answer, including writing the answer to the user.
-l:output(Answer) :- l:output(Answer), write(Answer).
-l:output(_) :- question, call(l:sentence).
-
-% Defines verb phrases in terms of noun phrases.
-l:verb_p(Number) :- l:noun_p(Number).
-l:noun_p(Number) :- l:verb_p(Number).
-
-% Defines how to write determiners and verbs.
-l:determiner(X, Y, Z) :- write(X; Y; Z).
-l:verb(X, Y, Z) :- write(X; Y; Z).
-
-% Defines verbs with specific parameters.
-l:verb :- l:verb(_, _, _).
-
-% Defines how to process words and their letters.
-l:word(X, Y) :- l:letter(Y | X, Y).
-l:word :- l:word(input, getletters).
-
-% Defines how to process letters and their sequences.
-l:letter(Y, X, Z, P) :- l:grab_l(Y | X, X); l:grab_l(X | Z, Z); l:grab_l(Z | P, P).
-
-% Defines a form of word processing, including handling strings and sentences.
-form_w(Char | String, String) --> l:word(Char | String, String), l:sentence(String).
-
-% Defines different types of sentences including ideas, information, questions, and commands.
-idea :- information; question; command.
-information :- l:sentence.
-question :- l:output(answer).
-command :- l:sentence, task.
-task :- objective(task); command.
-objective(X) :- input(X = task).
-
-% Defines how to handle input, including getting sentences and displaying information.
-input(Wordlist) :- getsentence(Wordlist).
-input(P) :- (P:Q), display(Q).
-input(_) :- assert((_)).
-input(getsentence) :- l:sentence(input, objective).
-
-% Reads a sentence from input and processes it.
-getsentence(Wordlist) :- get0(Char), getrest(Char, Wordlist).
-getrest(46, []) :- !.
-getrest(32, Wordlist) :- !, getsentence(Wordlist).
-getrest(Letter, [Word | Wordlist]) :- getletters(Letter, Letters, Nextchar), name(Word, Letters), getrest(Nextchar, Wordlist).
-
-% Defines how to get letters from input.
-getletters(46, [], 46) :- !.
-getletters(32, [], 32) :- !.
-getletters(Let, [Let | Letters], Nextchar) :- get0(Char), getletters(Char, Letters, Nextchar).
-
-% Defines custom operator for a specific precedence.
-:- op(1200, xfy, (-:-)).
-
-% Provides options to the user and handles input based on their choice.
-options :- write('Your Choice is either 1 or 2, enter 1 for sentence forms and 2 to stream input in English'), nl, options_display(49), options_choose(49), nl.
-options_display(49) :- sentence.
-options_display(49) :- get(49), nl.
-options_choose(49) :- read(49) -> l:sentence, display(l:sentence), options_choose_aux(49, 50, Input, (read(Input))).
-options_choose_aux(First, Last, Result, Char) :- Char >= First, Char =< Last, !, options_select(First, Char, Result).
-options_choose_aux(First, Last, Result, _) :- put(7), put(13), options, nl, display(First), nl, display(Last), nl, display(Result).
-
-% Recursively selects options based on user input.
-options_select(First, Char, Result) :- NewFirst is First + 1, options_select(NewFirst, Char, Result).
-
-% Defines dynamic predicates that can be modified at runtime.
-:- dynamic l:grab/2.
-:- dynamic l:letter/2.
-:- dynamic l:noun_p/0.
-:- dynamic l:prep_p/0.
-:- dynamic l:verb_p/0.
-:- dynamic l:word/4.
-:- dynamic l:grab_l/2.
-
-% Initialization directive to start the main goal upon loading
-:- initialization(main, main).
-
-% Dynamic predicates that can be modified at runtime
-:- dynamic prolog:meta_goal/2.
-:- dynamic main/0.
-:- dynamic writefacts/0.
-:- dynamic source_location/2.
-:- dynamic opt_meta/2.
-:- dynamic opt_type/3.
-
-% Declare prolog:meta_goal/2 as multifile to allow definition across multiple files
-:- multifile prolog:meta_goal/2.
-
-% Load the edit library for debugging purposes
-:- use_module(library(edit)).
-
-% Define the prolog_edit:locate/3 predicate for locating files to be edited
-prolog_edit:locate(
-    ['core.pl'],
-    ['inference_engine.pl'],
-    ['interface_buffer.pl'],
-    ['janus.pl']
-).
-
-% Define a placeholder for the prolog_edit:edit_source/1 predicate
-% that would typically invoke the user's preferred editor
-% prolog_edit:edit_source.
-
-% Create a directory for updates if it doesn't exist
-make_directory(['updates']).
-
-% Redefine make_directory to check if the directory exists before creating it
-make_directory(['updates']) :- exists_directory(['updates']),
-    (make_directory(['updates']), !, fail).
-
-% Call make/0 and main/0 if the directory was created
-make_directory(['updates']) :- (make, main).
-
-% Convert a Prolog path to an OS-specific filename
-prolog_to_os_filename(['updates'], ['C:Users>[_]']).
-
-% Define another conversion for a different path format
-prolog_to_os_filename(['updates'], ['C:Users:[updates]']) :-
-    make_directory(['updates']).
-
-% Locate a Prolog file and return its absolute path
-locate_prolog_file(Spec, Path) :-
-    absolute_file_name(Spec,
-                       [ file_type(prolog),
-                         access(read)
-                       ],
-                       Path).
-
-% Define the location of the last read term
-source_location(Spec, Path) :- locate_prolog_file(Spec, Path).
-
-% Set Prolog I/O streams for interactive behavior
-set_prolog_IO(In, Out, Error) :-
-    (   readfacts, In),
-    (   writefacts, Out),
-    main,
-    (fail) -> (nl, Error).
-
-% Handle file reading and processing
-handle_file(File) :-
-    open(File, read, Stream),
-    read_line_to_string(Stream, String),
-    close(Stream),
-    format('Received string: ~w~n', [String]),
-    % Additional processing can be added here
-    true.
-
-% Entry point to handle file input
-:- initialization(main, main).
-
-% Define consult predicates for reading Prolog source files
-consult(start) :-
-    (['core.pl']),
-    (['inference_engine.pl']),
-    (['interface_buffer.pl']).
-
-consult(['output.pl']) :-
-    $argv_options(['output.pl'], ['updates'], string).
-
-consult(make_directory(['updates'])) :- consult(['output.pl']).
-
-% Open a resource as a stream and perform actions
-open_resource(set_prolog_IO(In, Out, Error), consult(In), readfacts) :-
-    make, write(Out; Error).
-
-open_resource(
-    ['core.pl'],
-    (['inference_engine.pl']),
-    ['output.pl']) :- main.
-
-% Parse command line arguments and handle options
-$argv_options(Argv, directory, string) :- current_prolog_flag(argv, Argv).
-
-% Define option types for command line arguments
-$opt_type(string, consult(library(lists)), atom).
-
-% Execute a goal and set the calling context to a module
-$goal :- consult(['output.pl']),
-    open_resource(
-        ['core.pl'],
-        ['inference_engine.pl'],
-        ['interface_buffer.pl']
-    ).
-
-$lattice :- consult(['core.pl']).
-
-$smart :- goal.
-
-% Reconsult all changed source files
-make :- consult(['output.pl']), readfacts.
-
-% Read facts from a file and print them
-readfacts :-
-    open('output.pl', read, In),
-    repeat,
-    read_line_to_codes(In, X), writef([_]),
-    writef(X), nl,
-    X=end_of_file, !,
-    nl,
-    close(In).
-
-readfacts :-
-    $goal,
-    @(main, goal),
-    consult(['output.pl']),
-    open_resource(['inference_engine.pl'], ['core.pl'], ['interface_buffer.pl']).
-
-% Write facts to a file
-writefacts :-
-    open('output.pl', write(variable_names([])), Out),
-    write(Out, []),
-    nl,
-    close(Out).
-
-% Main entry point for interactive use and debugging
-main :-
-    open('start', write, OS),
-    (   consult(In),
-        read(In, Eq),
-        write(Eq, Out), nl,
-        write(OS, Eq), nl(OS), nl(Out),
-        false
-        ;
-        close(OS)
-    ).
-
-main :-
-    handle_file('input.txt').
-
-main([]) :- main.
-
-main(Argv) :-
-    echo(Argv).
-
-% Helper predicates to print command line arguments
-echo([]) :- nl.
-echo([Last]) :- !,
-    write(Last), nl.
-echo([H|T]) :-
-    write(H), write(' '),
-    echo(T).
-
-% Define resources for Prolog programs
-resource(string, ['inference_engine.pl'], exclude(['interface.pl'])).
-
-% Exclude elements from a list based on a condition
-exclude(goal, ['interface_buffer.pl'], ['core.pl']).
-
-% Define meta-goal processing
-prolog:meta_goal(parse|[G], [G+1]) :- goal.
-
-% Define a goal for stemming words with a given algorithm
-goal :-
-    snowball(Goal, In, Stem),
-    snowball_current_algorithm(['interface_buffer.pl']),
-    porter_stem(In, Stem),
-    exclude(Goal, Stem, In).
 

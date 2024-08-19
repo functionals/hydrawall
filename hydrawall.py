@@ -323,3 +323,35 @@ if __name__ == "__main__":
         for i in range(n_jobs):
             await queue.put(i)
             await asyncio.sleep()
+
+
+
+from PIL import Image
+
+def create_bitmap_from_binary(binary_string, width=8):
+    # Calculate the height based on the binary string length and width
+    height = len(binary_string) // width
+    if len(binary_string) % width != 0:
+        height += 1
+
+    image = Image.new('1', (width, height))  # Create a 1-bit image
+
+    pixels = image.load()
+    
+    for i in range(len(binary_string)):
+        x = i % width
+        y = i // width
+        pixels[x, y] = int(binary_string[i])
+
+    return image
+
+def main():
+    with open('output.txt', 'r') as file:
+        binary_string = file.read().strip()
+
+    image = create_bitmap_from_binary(binary_string)
+    image.save('output_bitmap.png')
+    image.show()
+
+if __name__ == "__main__":
+    main()
