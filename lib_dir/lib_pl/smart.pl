@@ -1485,12 +1485,3 @@ lattice:edge([A, B]; [B, C]; [C, B]) -:-
 
 
 speech:output(form_w(_),(_)).
-
-
-
-
-
-
-
-
-
