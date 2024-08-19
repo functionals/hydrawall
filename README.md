@@ -4,17 +4,17 @@
 This project integrates advanced tools and techniques for network forensics, vulnerability detection, and AI-driven expert systems. It leverages the capabilities of:
 
 
-- **[CORE](https://github.com/FunctionAnalysis/QUINE-ES/wiki/Overview)**:
+- **[QUINE](https://github.com/FunctionAnalysis/QUINE-ES/wiki/Overview)**:
 -  An expert system for functional analysis and reasoning.
-- **[INTERFACE_BUFFER](https://github.com/functionals/smart)**:
+- **[SMART](https://github.com/functionals/smart)**:
 -  A system for sophisticated data processing and analysis.
-- **[INFERENCE ENGINE](https://github.com/functionals/eeg/wiki/English-Engine-for-Grammar)**:
+- **[English Engine for Grammar](https://github.com/functionals/eeg/wiki/English-Engine-for-Grammar)**:
 -  An English Engine for Grammar, used for natural language processing and understanding.
 
 ## Features
 - **Network Forensics**: Utilize CORE and Dshell for in-depth network data analysis and pattern recognition.
 - **Vulnerability Detection**: Train and deploy TensorFlow models to identify and assess potential vulnerabilities.
-- **AI Expert System**: Employ Interface_Buffer and Inference_Engine for advanced decision-making and natural language processing.
+- **AI Expert System**: Advanced decision-making using inference and rules.
 
 ## Installation
 1. **Clone the Repository:**
@@ -37,14 +37,14 @@ This project integrates advanced tools and techniques for network forensics, vul
 ## Usage
 
 ### Network Forensics
-Run the CORE for network forensics analysis:
+TO DO
 
 ### Train the TensorFlow model with Dshell.trainingpack
 
-
+TO DO
 
 ### Run Vulnerability Analysis
-
+TO DO
 # Supplements
 
 # Dshell
@@ -392,18 +392,7 @@ and [Research Models](https://github.com/tensorflow/models/blob/master/research)
 directories are not described in detail here, refer to the individual project
 directories for more information.
 
-=======
- janus
-=======
-.. image:: https://github.com/aio-libs/janus/actions/workflows/ci.yml/badge.svg
-    :target: https://github.com/aio-libs/janus/actions/workflows/ci.yml
-.. image:: https://codecov.io/gh/aio-libs/janus/branch/master/graph/badge.svg
-    :target: https://codecov.io/gh/aio-libs/janus
-.. image:: https://img.shields.io/pypi/v/janus.svg
-    :target: https://pypi.python.org/pypi/janus
-.. image:: https://badges.gitter.im/Join%20Chat.svg
-    :target: https://gitter.im/aio-libs/Lobby
-    :alt: Chat on Gitter
+## janus
 
 
 
@@ -421,9 +410,9 @@ follows `asyncio queue design
 <https://docs.python.org/3/library/asyncio-queue.html>`_.
 
 Usage example (Python 3.7+)
-===========================
 
-.. code:: python
+
+Python
 
     import asyncio
     import janus
@@ -455,11 +444,10 @@ Usage example (Python 3.7+)
     asyncio.run(main())
 
 
-Usage example (Python 3.5 and 3.6)
-==================================
+Usage example Python 3.5 and 3.6
 **N.B. For python 3.6 and below you must use janus < 1.0.0**
 
-.. code:: python
+
 
     import asyncio
     import janus
@@ -510,24 +498,16 @@ License
 ``janus`` library is offered under Apache 2 license.
 
 Thanks
-======
-
-The library development is sponsored by DataRobot (https://datarobot.com)
-
-.. _asyncio: https://docs.python.org/3/library/asyncio.html
 
 
+The library development is sponsored by DataRobot https://datarobot.com
 
-========================================================
-pyOpenSSL -- A Python wrapper around the OpenSSL library
-========================================================
+ _asyncio: https://docs.python.org/3/library/asyncio.html
 
-.. image:: https://readthedocs.org/projects/pyopenssl/badge/?version=stable
-   :target: https://pyopenssl.org/en/stable/
-   :alt: Stable Docs
 
-.. image:: https://github.com/pyca/pyopenssl/workflows/CI/badge.svg?branch=main
-   :target: https://github.com/pyca/pyopenssl/actions?query=workflow%3ACI+branch%3Amain
+
+
+## pyOpenSSL -- A Python wrapper around the OpenSSL library
 
 **Note:** The Python Cryptographic Authority **strongly suggests** the use of `pyca/cryptography`_
 where possible. If you are using pyOpenSSL for anything other than making a TLS connection
@@ -561,7 +541,7 @@ You can also join ``#pyca`` on ``irc.libera.chat`` to ask questions or get invol
 .. _GitHub: https://github.com/pyca/pyopenssl
 .. _`pyca/cryptography`: https://github.com/pyca/cryptography
 
-=========================
+
 MaxMind GeoIP2 Python API
 =========================
 
@@ -761,9 +741,9 @@ Database Example
 ----------------
 
 City Database
-^^^^^^^^^^^^^
 
-.. code-block:: pycon
+
+ Python
 
     >>> import geoip2.database
     >>>
@@ -802,9 +782,8 @@ City Database
     IPv4Network('203.0.113.0/24')
 
 Anonymous IP Database
-^^^^^^^^^^^^^^^^^^^^^
 
-.. code-block:: pycon
+Python
 
     >>> import geoip2.database
     >>>
@@ -832,9 +811,9 @@ Anonymous IP Database
     IPv4Network('203.0.113.0/24')
 
 ASN Database
-^^^^^^^^^^^^
 
-.. code-block:: pycon
+
+Python
 
     >>> import geoip2.database
     >>>
@@ -852,9 +831,8 @@ ASN Database
     IPv4Network('203.0.113.0/24')
 
 Connection-Type Database
-^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. code-block:: pycon
+Python
 
     >>> import geoip2.database
     >>>
@@ -871,9 +849,9 @@ Connection-Type Database
 
 
 Domain Database
-^^^^^^^^^^^^^^^
 
-.. code-block:: pycon
+
+Python
 
     >>> import geoip2.database
     >>>
@@ -887,9 +865,9 @@ Domain Database
     '203.0.113.0'
 
 Enterprise Database
-^^^^^^^^^^^^^^^^^^^
 
-.. code-block:: pycon
+
+Python
 
     >>> import geoip2.database
     >>>
@@ -936,9 +914,9 @@ Enterprise Database
 
 
 ISP Database
-^^^^^^^^^^^^
 
-.. code-block:: pycon
+
+Python
 
     >>> import geoip2.database
     >>>

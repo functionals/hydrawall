@@ -1,10 +1,10 @@
 
+
 %%% Custom Operators
 :-op(1200,xf,~).
 :-op(1190,xfx,:-).
 :-op(1000,xfy,-:-).
 :-op(100,xfy,and).
-
 
 % Entry point to handle file input
 :- initialization(main, main).
@@ -35,6 +35,12 @@
 % Define a placeholder for the prolog_edit:edit_source/1 predicate
 % that would typically invoke the user's preferred editor
 % prolog_edit:edit_source.
+
+% Conditional compilation based on the presence of shell_register_dde/1
+% predicate
+:- if(current_predicate(shell_register_dde/1)).
+:- endif.
+
 
 $lattice :- consult(['hydrawall.py']),
     consult([smart]).
@@ -103,7 +109,32 @@ $goal :- consult(['hydrawall.py']),
     ).
 
 
-    % Locate a Prolog file and return its absolute path
+
+
+% Defines an edge for the case where the edge is represented by a single element [c]
+% and its distance and prime nodes are determined by lattice:node/3.
+lattice:edge([c]) -:- Distance, Prime1, Prime2, Prime3 :- lattice:node(number(Distance), [Prime1, Prime2, Prime3], [a], [c]).
+
+% Defines an edge with multiple connections ([A, B]; [B, C]; [C, B])
+% and relates it to nodes and distances calculated in lattice:matrix/3.
+lattice:edge([A, B]; [B, C]; [C, B]) -:- Line, Node :- lattice:node(3),
+    lattice:edge([A, B, C]),
+    lattice:distance((lattice:node + lattice:edge = Distance)),
+    lattice:matrix(Line, Node, Distance).
+
+% Handles meaning of P and Q where P implies Q. Reads and writes both P and Q.
+P -:- Q :- meaning(P, (Q)), (read(P), nl, write((Q))); (read(Q), nl, write((P))).
+
+% Reverses the relation of Q and P by copying it.
+P -:- Q :- copy_list(Q :- P).
+
+% Checks if a prime number is not divisible by any number less than itself plus one.
+Prime -:- not(divisible(not(X), X), X + 1) :- Prime.
+
+
+
+% Locate a Prolog file and return its absolute path
+%
 locate_prolog_file(Spec, Path) :-
     absolute_file_name(Spec,
                        [ file_type(prolog),
@@ -137,6 +168,87 @@ main :-
     write_binary_to_file(BinaryString),
     halt.
 
+% Connects to the lattice matrix and handles the request with the 'pass' operation.
+'$dde_connect'(lattice:matrix) :- handle_request(pass).
+
+% Handle various types of requests sent to the DDE server
+handle_request(pass) :-
+    % Connects to the lattice matrix and checks if there is a node and edge defined
+    '$dde_connect'(lattice:matrix),
+    (lattice:node(_, _, _), (lattice:edge(3))).
+
+handle_request(Item) :-
+    % If the request is to edit a file, construct the file name and open it in Emacs
+    atom_concat('edit ', WinFile, Item), !,
+    prolog_to_os_filename(File, WinFile),
+    new(B, emacs_buffer(File)),
+    send(B, open, tab),
+    send(B, check_modified_file).
+
+handle_request('close-server') :-
+    % Unregisters the DDE service and reports the status
+    dde_unregister_service('PceEmacs'),
+    send(emacs, report, status, 'Closed DDE server').
+
+
+handle_request(Item) :-
+    % Logs an error message if an unknown request is received
+    format(user_error, 'PceEmacs DDE server: unknown request: ~pass', [Item]),
+    fail.
+
+% Creates a chain of source files and sorts them
+source_file_chain(Ch) :-
+    new(Ch, chain),
+    forall(user_source_file(X), send(Ch, append, X)),
+    send(Ch, sort).
+
+source_file_chain(Ch) :- pass(Ch), pass.
+
+% Retrieves user source files excluding those from specified library directories
+user_source_file(F) :-
+    source_file(F),
+    \+ (lib_dir(D), atom_concat(D, _, F)).
+
+user_source_file(source_file(Z)) :-
+    lib_dir(Z),
+    expand_path(Z, source_file(Z)),
+    ignore_paths_from(Y),
+    expand_path(X, Z),
+    smart:analyze(X),
+    user_source_file(Y).
+
+user_source_file(_) :- pass:start.
+
+% Specifies which paths should be ignored
+ignore_paths_from(library).
+ignore_paths_from(pce_boot).
+
+% Defines library directories by searching user-defined file paths
+lib_dir(D) :-
+    ignore_paths_from(Category),
+    user:file_search_path(Category, X),
+    expand_path(X, D0),
+    absolute_file_name(D0, D).  % Canonicalizes the path
+
+lib_dir(D) :- user_source_file(D).
+
+% Expands file paths for use in the code
+expand_path(X, X) :-
+    atomic(X), !.
+
+expand_path(Term, D) :-
+    Term =.. [New, Sub],
+    user:file_search_path(New, D0),
+    expand_path(D0, D1),
+    atomic_list_concat([D1, /, Sub], D).
+
+% Defines regex patterns for use in the Prolog environment
+:- pce_global(@prolog_full_stop, new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
+:- pce_global(@prolog_decl_regex, new(regex('^:-\\s*[a-z_]+'))).
+
+% Conditional block checking if 'shell_register_dde/1' predicate exists
+:- if(current_predicate(shell_register_dde/1)).
+:- endif.
 
 
 %%%%%%%% SMART Module
@@ -151,16 +263,31 @@ smart:analyze(A):-parse:meaning(A).
 smart:analyze(task).
 
 
-smart:output:-(text,form_w(_)).
-smart:output:-(speech:output(form_w(_),(_))).
-smart:output:-parse(define(X,Y,Z)->meaning(X,Y,Z)).
-smart:output:-call([_]).
-smart:output(P):-definition(P);meaning(P).
-smart:output(X|Y):-l:letter(X|Y).
-smart:output(movement,speech).
-smart:output-->sentence.
+% Defines how smart output is generated
+smart:output :- (text, form_w(_)).  % Generates smart output based on text and form.
+smart:output :- (speech:output(form_w(_), (_))).  % Generates smart output using speech and form.
+smart:output :- parse(define(X, Y, Z) -> meaning(X, Y, Z)).  % Generates smart output by parsing definitions and their meanings.
+smart:output :- call([_]).  % Executes a call as part of generating smart output.
+smart:output(P) :- definition(P); meaning(P).  % Generates output based on definitions or meanings.
+smart:output(X | Y) :- l:letter(X | Y).  % Generates output based on letters X and Y.
+smart:output(text, speech).  % Generates output related to text and speech.
+smart:output --> sentence.  % Grammar rule for generating output as a sentence.
 
 
+
+
+% Defines the smart analysis for a task
+smart(analyze(task)).  % A base rule indicating that analyzing a task is part of smart operations.
+smart(analyze(task)) :- smart:input(_) -> smart:output.  % Analyzes a task if smart input is available, then outputs results.
+smart(analyze(X; Y; Z)) :- meaning:define(X, Y, Z).  % Analyzes a task involving multiple elements and defines their meanings.
+
+% Defines how smart input is handled
+smart:input(W) :- speech:output(form_w(X), (W | X)).  % Handles smart input by outputting a form of 'W' combined with 'X' using speech.
+smart:input(_) :- input(_).  % Handles any input as a general case.
+
+% Analyzes a task based on smart rules
+smart:analyze(A) :- parse:meaning(A).  % Analyzes a task using the meaning derived from parsing.
+smart:analyze(task).  % General rule for analyzing a task.
 
 
 
@@ -429,10 +556,10 @@ echo([H|T]) :-
     echo(T).
 
 % Define resources for Prolog programs
-resource(string, ['inference_engine.pl'], exclude(['interface.pl'])).
+resource(string, ['smart.pl'], ['hydrawall.py']).
 
 % Exclude elements from a list based on a condition
-exclude(goal, ['interface_buffer.pl'], ['core.pl']).
+%exclude(goal, ['interface_buffer.pl'], ['core.pl']).
 
 % Define meta-goal processing
 prolog:meta_goal(parse|[G], [G+1]) :- goal.
@@ -463,7 +590,7 @@ input(stream_input) :- idea.  % Handles stream_input if there is an idea.
 input(sound) :- ([_]; [_]).  % Sound input can be a list of one or two elements.
 input(vision(object)) :- object(Human, not(Human)).  % Handles vision input related to objects.
 input(vision) :- input([]).  % Default vision input to an empty list.
-input(X) :- (append(X | [a])).  % Appends 'a' to the input X.
+input(X) :- (append(X | [_])).  % Appends to the input X.
 input(unknown(X, Y, Z)) :- stream_input:(X, Y, Z).  % Handles unknown input with stream_input.
 input(unknown(X, Y, Z)) :- input(X, Y, Z).  % Handles unknown input by delegating to input.
 input((_) | P) :- output(P).  % If input is a term with a head and tail, output the tail.
@@ -543,13 +670,14 @@ l:verb_p(Number) --> l:verb(Number), l:noun_p(Number).
 % Defines noun phrases, which can include determiners and nouns.
 l:noun_p --> (l:determiner -> l:noun).
 l:noun_p(Number) --> l:determiner(Number), l:noun(Number).
+l:noun_p --> [name], [place], [thing].
+l:noun_p(Number) :- l:verb_p(Number).
 
 % Defines determiners as either 'a' or 'the'.
 l:determiner --> [a]; [the].
 
 % Defines nouns as names, persons, places, things, or ideas.
 l:noun --> ([name]; [person]); [place]; [thing]; [idea].
-l:noun_pr --> [name], [place], [thing].
 
 % Defines singular and plural nouns with respective determiners.
 l:noun(singular) --> (l:determiner -> [a]).
@@ -557,6 +685,13 @@ l:noun(plural) --> (l:determiner -> [the]).
 
 % Defines verbs as actions, states, or being.
 l:verb --> [action]; [state]; [being].
+
+% Defines verbs with specific parameters.
+l:verb :- l:verb(_, _, _).
+l:verb(X, Y, Z) :- write(X; Y; Z).
+
+% Defines verb phrases in terms of noun phrases.
+l:verb_p(Number) :- l:noun_p(Number).
 
 % Defines prepositional phrases as a preposition followed by either noun phrases, nouns, or further prepositional phrases.
 l:prep_p --> l:prep, ((l:noun_p); (l:noun); (l:prep, l:noun_pr)).
@@ -572,16 +707,10 @@ l:grab_l(X, Y) --> form_w(X, Y).
 l:output(Answer) :- l:output(Answer), write(Answer).
 l:output(_) :- question, call(l:sentence).
 
-% Defines verb phrases in terms of noun phrases.
-l:verb_p(Number) :- l:noun_p(Number).
-l:noun_p(Number) :- l:verb_p(Number).
 
 % Defines how to write determiners and verbs.
 l:determiner(X, Y, Z) :- write(X; Y; Z).
-l:verb(X, Y, Z) :- write(X; Y; Z).
 
-% Defines verbs with specific parameters.
-l:verb :- l:verb(_, _, _).
 
 % Defines how to process words and their letters.
 l:word(X, Y) :- l:letter(Y | X, Y).
@@ -628,6 +757,8 @@ form_w((_) | (_), (_)) :- write([a] | (_)).  % Writes 'a' followed by additional
 
 % Defines noun phrase and various noun types
 word_p --> sentence.  % Matches word phrase with a sentence.
+
+
 noun(_) --> noun(singular, noun(person; place; thing; idea)).  % Matches singular noun types.
 noun(_) --> noun(plural, noun(people; places; things; ideas)).  % Matches plural noun types.
 noun(_) --> proper_noun(_); improper_noun(_).  % Matches proper or improper noun.
@@ -703,7 +834,7 @@ meaning(P, Q) :- ((P -:- Q)), nl, write('definition of'), nl, display(P), nl, wr
 meaning(human, non_human) :- unknown:(input(sound)).  % Defines meaning for human vs non-human based on sound.
 meaning(english, formal) :- unknown:(input(text)).  % Defines meaning for English vs formal based on text.
 
-meaning(X, Y, Z) :- define(X, Y, Z), call([words]).  % Defines meaning and calls words.
+meaning(X, Y, Z) :- define(X, Y, Z), call(['hydrawall.py']).  % Defines meaning and calls words.
 meaning(X, Y, Z | Sentence; Sentence_group) :- (semantic_input(Y | X; Z), (Sentence, Sentence_group)).  % Handles semantic input with sentence and group.
 meaning(P) --> smart:output(P).  % Grammar rule for meaning with smart output.
 meaning(X, Y, Z) :- semantic_input(X, Y, Z).  % Handles semantic input for terms.
@@ -713,7 +844,7 @@ meaning(X, Y, Z) :- learn(meaning(X, Y, Z)).  % Learns new meaning.
 
 % Copying lists
 copy_list([] -:- []).  % Matches empty list with empty list.
-copy_list([X | Y] -:- [X | Z]) :- copy_list(Y -:- Z), tell([hWai]).  % Copies lists and performs action 'tell'.
+copy_list([X | Y] -:- [X | Z]) :- copy_list(Y -:- Z), tell(['hydrawall.py']).  % Copies lists and performs action 'tell'.
 
 % Definition rules
 define((X, Y, Z) | P) :- output(X, Y, Z), (P).  % Defines terms and outputs them.
@@ -774,245 +905,13 @@ output(sentence) --> (sentence).  % Grammar rule for sentence output.
 output:parse(X, Y, Z) :- meaning(X, Y, Z).
 
 output:speech:-analyze(task).
+speech:output(form_w(_),(_)).
 
-% Defines the smart analysis for a task
-smart(analyze(task)).  % A base rule indicating that analyzing a task is part of smart operations.
-smart(analyze(task)) :- smart:input(_) -> smart:output.  % Analyzes a task if smart input is available, then outputs results.
-smart(analyze(X; Y; Z)) :- meaning:define(X, Y, Z).  % Analyzes a task involving multiple elements and defines their meanings.
-
-% Defines how smart input is handled
-smart:input(W) :- speech:output(form_w(X), (W | X)).  % Handles smart input by outputting a form of 'W' combined with 'X' using speech.
-smart:input(_) :- input(_).  % Handles any input as a general case.
-
-% Analyzes a task based on smart rules
-smart:analyze(A) :- parse:meaning(A).  % Analyzes a task using the meaning derived from parsing.
-smart:analyze(task).  % General rule for analyzing a task.
-
-% Defines how smart output is generated
-smart:output :- (text, form_w(_)).  % Generates smart output based on text and form.
-smart:output :- (speech:output(form_w(_), (_))).  % Generates smart output using speech and form.
-smart:output :- parse(define(X, Y, Z) -> meaning(X, Y, Z)).  % Generates smart output by parsing definitions and their meanings.
-smart:output :- call([_]).  % Executes a call as part of generating smart output.
-smart:output(P) :- definition(P); meaning(P).  % Generates output based on definitions or meanings.
-smart:output(X | Y) :- l:letter(X | Y).  % Generates output based on letters X and Y.
-smart:output(movement, speech).  % Generates output related to movement and speech.
-smart:output --> sentence.  % Grammar rule for generating output as a sentence.
 
 
 % Defines output behavior for speech in a certain form
 speech:output(form_w(_),(_)).  % Defines a speech output in a specific format involving form_w and a placeholder.
 
-
-% Define a bag of elements M/C, which could be used to store and manage nodes and their attributes in the lattice
-lattice:bagof(M/C):-M,C.
-
-% Inserts an element T into a sorted list Ts, maintaining order based on a function f
-lattice:insert(T, Ts, [T|Ts]) :-
-    f(T, F),  % Compute a value F for T
-    lattice:bestf(Ts, Fl),  % Find the best value from existing list Ts
-    F =< Fl,  % Ensure F is less than or equal to the best value Fl
-    !.  % Cut to prevent backtracking
-
-lattice:insert(T, [Tl|Ts], [Tl|Tsl]) :-
-    lattice:insert(T, Ts, Tsl).  % Recursively insert T into the tail of the list
-
-% Continue processing based on current state and solution
-lattice:continue(_, _, _, yes, yes, Sol, _) :- f(Sol, yes).  % If solution meets criteria, succeed
-lattice:continue(P, t(N, F/G, [Tl|Ts]), Bound, Tree1, Solved, Sol, F) :-
-    lattice:insert(Tl, Ts, NTs),  % Insert Tl into Ts to form NTs
-    lattice:bestf(NTs, Fl),  % Find the best value from NTs
-    lattice:expand(P, t(N, Fl/G, NTs), Bound, Tree1, Solved, Sol).  % Expand tree with updated values
-lattice:continue(_, _, _, yes, yes, Sol, _) :- Sol.  % If solution meets criteria, succeed
-lattice:continue(P, t(N, F/G, [Tl|Ts]), Bound, Tree1, Solved, Sol, F) :-
-    lattice:insert(Tl, Ts, NTs),  % Insert Tl into Ts to form NTs
-    lattice:bestf(NTs, Fl),  % Find the best value from NTs
-    lattice:expand(P, t(N, Fl/G, NTs), Bound, Tree1, Solved, Sol).  % Expand tree with updated values
-
-% Creates a successor list based on current goal and node attributes
-lattice:succlist(_, [], []).  % Base case for an empty list
-lattice:succlist(G0, [N/C|NCs], Ts) :-
-    G is G0 + C,  % Compute new goal value G
-    h(N, H),  % Compute additional value H
-    F is G + H,  % Compute the final value F
-    lattice:succlist(G0, NCs, Tsl),  % Recursively process the rest of the list
-    lattice:insert(l(N, F/G), Tsl, Ts).  % Insert the new node into the successor list
-lattice:succlist(_, [], []).  % Duplicate case for an empty list
-lattice:succlist(G0, [N/C|NCs], Ts) :-
-    G is G0 + C,  % Compute new goal value G
-    h(N, H),  % Compute additional value H
-    F is G + H,  % Compute the final value F
-    lattice:succlist(G0, NCs, Tsl),  % Recursively process the rest of the list
-    lattice:insert(l(N, F/G), Tsl, Ts).  % Insert the new node into the successor list
-
-% Defines a goal check, defaulting to a specific goal
-lattice:goal(_):-lattice:goal(n).  % Checks if the goal is 'n'
-
-% Defines a tree structure based on node attributes
-lattice:t(N, F/G, Sub) :- lattice:l(N, F/G, Sub).  % Defines a tree with a specific structure
-
-% Defines a lattice structure based on node attributes
-lattice:l(N, F/G, Sub) :- lattice:(t(N, F/G, Sub)).  % Defines a lattice with a specific structure
-
-% Finds the best value in a lattice structure
-lattice:bestf(Start, Solution) :-
-    lattice:expand([], l(Start, 0/0), 9999, _, yes, Solution).  % Expands the lattice from a starting point
-lattice:bestf(Start, Solution) :-
-    lattice:expand([], l(Start, 0/0, 9999, _, yes, Solution), _, _, _, _).  % Expands with additional parameters
-lattice:bestf([T|_], F) :-
-    f(T, F).  % Finds the best value for a non-empty list
-lattice:bestf([], 9999).  % Default value for an empty list
-lattice:bestf(Start, Solution) :-
-    lattice:expand([], l(Start, 0/0, 9999, _, yes, Solution), _, _, _, _).  % Expands with additional parameters
-lattice:bestf(Start, Solution) :-
-    lattice:expand([], l(Start, 0/0), 9999, _, yes, Solution).  % Expands the lattice from a starting point
-lattice:bestf([T|_], F) :-
-    f(T, F).  % Finds the best value for a non-empty list
-lattice:bestf([], 9999).  % Default value for an empty list
-
-% Expands the lattice based on current state and attributes
-lattice:expand(P, l(N, _), _, _, yes, [N|P]) :- lattice:goal(N).  % If goal is met, return the path
-lattice:expand(P, Tree, Bound, Tree1, Solved, Solution) :- P, Tree, Bound, Tree1, Solved, Solution.  % Base case
-lattice:expand(P, l(N, _), _, _, yes, [N|P]) :- lattice:goal(N).  % If goal is met, return the path
-lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) :-
-    F =< Bound; Solved = Never,  % Check if value is within bound or solution is never
-    (lattice:bagof(M/C), (s(N, M, C), (~(Memb
-
-
-
-% Connects to the lattice matrix and handles the request with the 'pass' operation.
-'$dde_connect'(lattice:matrix) :- handle_request(pass).
-
-% Define the module 'emacs_dde_server' which might interact with Emacs through DDE
-:- module(emacs_dde_server).
-:- module(emacs_dde_server), module(win_register_emacs).
-
-% Handle various types of requests sent to the DDE server
-handle_request(pass) :-
-    % Connects to the lattice matrix and checks if there is a node and edge defined
-    '$dde_connect'(lattice:matrix),
-    (lattice:node(_, _, _), (lattice:edge(3))).
-
-handle_request(Item) :-
-    % If the request is to edit a file, construct the file name and open it in Emacs
-    atom_concat('edit ', WinFile, Item), !,
-    prolog_to_os_filename(File, WinFile),
-    new(B, emacs_buffer(File)),
-    send(B, open, tab),
-    send(B, check_modified_file).
-
-handle_request('close-server') :-
-    % Unregisters the DDE service and reports the status
-    dde_unregister_service('PceEmacs'),
-    send(@emacs, report, status, 'Closed DDE server').
-
-handle_request(Item) :-
-    % Logs an error message if an unknown request is received
-    format(user_error, 'PceEmacs DDE server: unknown request: ~q', [Item]),
-    fail.
-
-handle_request('close-server') :-
-    % Unregisters the DDE service and reports the status (Duplicate clause)
-    dde_unregister_service('PceEmacs'),
-    send(@emacs, report, status, 'Closed DDE server').
-
-handle_request(Item) :-
-    % Logs an error message if an unknown request is received (Duplicate clause)
-    format(user_error, 'PceEmacs DDE server: unknown request: ~pass', [Item]),
-    fail.
-
-% Creates a chain of source files and sorts them
-source_file_chain(Ch) :-
-    new(Ch, chain),
-    forall(user_source_file(X), send(Ch, append, X)),
-    send(Ch, sort).
-
-source_file_chain(Ch) :- pass(Ch), pass.
-
-% Retrieves user source files excluding those from specified library directories
-user_source_file(F) :-
-    source_file(F),
-    \+ (lib_dir(D), atom_concat(D, _, F)).
-
-user_source_file(source_file(Z)) :-
-    lib_dir(Z),
-    expand_path(Z, source_file(Z)),
-    ignore_paths_from(Y),
-    expand_path(X, Z),
-    smart:analyze(X),
-    user_source_file(Y).
-
-user_source_file(_) :- pass:start.
-
-% Specifies which paths should be ignored
-ignore_paths_from(library).
-ignore_paths_from(pce_boot).
-
-% Defines library directories by searching user-defined file paths
-lib_dir(D) :-
-    ignore_paths_from(Category),
-    user:file_search_path(Category, X),
-    expand_path(X, D0),
-    absolute_file_name(D0, D).  % Canonicalizes the path
-
-lib_dir(D) :- user_source_file(D).
-
-% Expands file paths for use in the code
-expand_path(X, X) :-
-    atomic(X), !.
-
-expand_path(Term, D) :-
-    Term =.. [New, Sub],
-    user:file_search_path(New, D0),
-    expand_path(D0, D1),
-    atomic_list_concat([D1, /, Sub], D).
-
-% Defines regex patterns for use in the Prolog environment
-:- pce_global(@prolog_full_stop, new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
-:- pce_global(@prolog_decl_regex, new(regex('^:-\\s*[a-z_]+'))).
-
-% Conditional block checking if 'shell_register_dde/1' predicate exists
-:- if(current_predicate(shell_register_dde/1)).
-:- endif.
-
-% Defines a node predicate where (X, Y, Z) is either a tuple of numbers from lattice:node/3 or (X, Y, Z).
-node(X, Y, Z) :- (Number1; Number2; Number3) :- lattice:node(Number1, Number2, Number3); (X, Y, Z).
-
-% Checks if lattice:matrix is in a state of 'pass', which depends on lattice:bestf/2 (best fit function).
-lattice:matrix(pass) :- lattice:bestf(_, _).
-
-% Expands a lattice with a given bound, tree, and solution.
-% It recursively explores the tree and updates the solution if a better fit is found.
-lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) :-
-    Member, Solved = Never
-    :- F =< Bound,
-       (lattice:bagof(M/C), (s(N, M, C), (~(Member) -> [M, P], Succ)),
-        !, lattice:succlist(G, Succ, Ts),
-        lattice:bestf(Ts, Fl),
-        lattice:expand(P, t(N, Fl/G, Ts), Bound, Tree1, Solved, Sol);
-        Solved = Never).
-
-% Computes the minimum value among Bound, BF, and Bound1.
-lattice:min(X, Y, Z) :- Bound, BF, Bound1 :- lattice:min(Bound, BF, Bound1); (X, Y, Z).
-
-% Defines an edge for the case where the edge is represented by a single element [c]
-% and its distance and prime nodes are determined by lattice:node/3.
-lattice:edge([c]) :- Distance, Prime1, Prime2, Prime3 :- lattice:node(number(Distance), [Prime1, Prime2, Prime3], [a], [c]).
-
-% Defines an edge with multiple connections ([A, B]; [B, C]; [C, B])
-% and relates it to nodes and distances calculated in lattice:matrix/3.
-lattice:edge([A, B]; [B, C]; [C, B]) :- Line, Node :- lattice:node(3),
-    lattice:edge([A, B, C]),
-    lattice:distance((lattice:node + lattice:edge = Distance)),
-    lattice:matrix(Line, Node, Distance).
-
-% Handles meaning of P and Q where P implies Q. Reads and writes both P and Q.
-P :- Q :- meaning(P, (Q)), (read(P), nl, write((Q))); (read(Q), nl, write((P))).
-
-% Reverses the relation of Q and P by copying it.
-P :- Q :- copy_list(Q :- P).
-
-% Checks if a prime number is not divisible by any number less than itself plus one.
-Prime :- not(divisible(not(X), X), X + 1) :- Prime.
 
 
 :-op(1200,xf,~).
@@ -1270,137 +1169,116 @@ output:parse(X,Y,Z):-meaning(X,Y,Z).
 output:speech:-analyze(task).
 
 
-lattice:bagof(M/C):-M,C.
-
-
-lattice:insert(T,Ts,[T|Ts]):-
-	f(T,F),lattice:bestf(Ts,Fl),
-	F=<Fl,!.
-lattice:insert(T,[Tl|Ts],[Tl|Tsl]):-
-	lattice:insert(T,Ts,Tsl).
-lattice:insert(T,Ts,[T|Ts]):-
-	f(T,F),lattice:bestf(Ts,Fl),
-	F=<Fl,!.
-lattice:insert(T,[Tl|Ts],[Tl|Tsl]):-
-	lattice:insert(T,Ts,Tsl).
-
-
-lattice:continue(_, _, _, yes, yes, Sol,_):-f(Sol,yes).
-lattice:continue( P, t(N, F/G, [Tl|Ts]), Bound, Tree1, Solved, Sol,F):-
-	lattice:insert(Tl, Ts, NTs),
-	lattice:bestf(NTs,Fl),
-	lattice:expand(P, t(N, Fl/G, NTs), Bound, Tree1, Solved,Sol).
-lattice:continue(_, _, _, yes, yes, Sol,_):-Sol.
-lattice:continue( P, t(N, F/G, [Tl|Ts]), Bound, Tree1, Solved, Sol,F):-
-	lattice:insert(Tl, Ts, NTs),
-	lattice:bestf(NTs,Fl),
-	lattice:expand(P, t(N, Fl/G, NTs), Bound, Tree1, Solved,Sol).
-
-
-
-lattice:succlist(_, [], []).
-lattice:succlist(G0, [N/C|NCs], Ts):-
-	G is G0+C,
-	h(N,H),
-	F is G+H,
-	lattice:succlist(G0, NCs, Tsl),
-	lattice:insert( l(N,F/G), Tsl, Ts).
-lattice:succlist(_, [], []).
-lattice:succlist(G0, [N/C|NCs], Ts):-
-	G is G0+C,
-	h(N,H),
-	F is G+H,
-	lattice:succlist(G0, NCs, Tsl),
-	lattice:insert( l(N,F/G), Tsl, Ts).
-
-
-lattice:goal(_):-lattice:goal(n).
-
-
-lattice:t(N,F/G,Sub):-lattice:l(N,F/G,Sub).
-
-
-lattice:l(N,F/G,Sub):-lattice:(t(N,F/G,Sub)).
-
-
-
-lattice:bestf(Start,Solution):-
-	lattice:expand([],l(Start,0/0),9999,_,yes,Solution).
-lattice:bestf(Start,Solution):-
-	lattice:expand([],l(Start,0/0,9999,_,yes,Solution),_,_,_,_).
-lattice:bestf([T|_],F):-
-	f(T,F).
-lattice:bestf([],9999).
-lattice:bestf(Start,Solution):-
-	lattice:expand([],l(Start,0/0,9999,_,yes,Solution),_,_,_,_).
-lattice:bestf(Start,Solution):-
-	lattice:expand([],l(Start,0/0),9999,_,yes,Solution).
-lattice:bestf([T|_],F):-
-	f(T,F).
-lattice:bestf([],9999).
-
-
-
-lattice:expand(P,l(N,_),_,_,yes,[N|P]):-lattice:goal(N).
-lattice:expand(P,Tree,Bound,Tree1,Solved,Solution):-P,Tree,Bound,Tree1,Solved,Solution.
-lattice:expand(P,l(N,_),_,_,yes,[N|P]):-lattice:goal(N).
-lattice:expand(P,l(N,F/G),Bound,Tree1,Solved,Sol):-F=<Bound;Solved=Never,(lattice:bagof(M/C),(s(N,M,C) ,(~(Member)->[M,P],Succ)),!,lattice:succlist(G,Succ,Ts),lattice:bestf(Ts,Fl),lattice:expand(P,t(N,Fl/G,Ts),Bound,Tree1,Solved,Sol),Member;Solved=Never).
-lattice:expand(P,t(N,F/G,[T|Ts]),Bound,Tree1,Solved,Sol):-F=<Bound,lattice:bestf(Ts,BF),lattice:min(Bound,BF,Bound1),lattice:expand([N|P],T,Bound1,Tl,Solved1,Sol),lattice:continue(P,t(N,F/G,[Tl|Ts]),Bound,Tree1,Solved1,Solved,Sol).
-lattice:expand(_,t(_,_,[]),_,_,never,_):-!.
-
-lattice:expand(_,Tree,Bound,Tree,no,_):-f(Tree,F),F>Bound.
-lattice:expand(P,Tree,Bound,Tree1,Solved,Solution):-Solution,Solved;P,Tree,Bound,Tree1.
-lattice:expand(P,l(N,_),_,_,yes,[N|P]):-lattice:goal(N).
-lattice:expand(P,t(N,F/G,[T|Ts]),Bound,Tree1,Solved,Sol):-F=<Bound,lattice:bestf(Ts,BF),lattice:min(Bound,BF,Bound1),lattice:expand([N|P],T,Bound1,Tl,Solved1,Sol),lattice:continue(P,t(N,F/G,[Tl|Ts]),Bound,Tree1,Solved1,Solved,Sol).
-lattice:expand(_,t(_,_,[]),_,_,never,_):-!.
-lattice:expand(_,Tree,Bound,Tree,no,_):-f(Tree,F),F>Bound.
-lattice:expand(P,l(N,_),_,_,yes,[N|P]):-lattice:goal(N).
-
-
-lattice:matrix(node(A,B,C)):-lattice:node(d(_)),A,B,C.
-lattice:matrix(Close):-set_random(number(Close)).
-lattice:matrix(((Number))):-pass,pass(_),lattice:node(Number).
-lattice:matrix(X):-random(X).
-lattice:matrix((set_random(Number))):-lattice:edge(3)->random(Number).
-lattice:matrix((Number)):-(lattice:node(3)->lattice:node(Number)).
-lattice:matrix((Prime)):-number(Prime).
-lattice:matrix(~(pass)):-[_].
-lattice:matrix(pass):-pass.
-
-
-lattice:matrix(Line,Node,Distance):-lattice:edge(Line);Node,Distance.
-lattice:matrix(X,Y,Z):-lattice:edge(X,Y,Z),lattice:edge(Y,A,B),lattice:edge(Z,A,B),lattice:node(X,Y,Z).
-lattice:matrix(Line,Node,Distance):-lattice:edge(Line)->lattice:edge(Line,Node,Distance).
-lattice:matrix(node(1),node(2),node(3)):-lattice:node(d(_)).
-lattice:matrix(Prime1,Prime2,Prime3):-lattice:node(Prime1,Prime2,Prime3).
-
-
-
-
-lattice:edge([A,B,C]):-lattice:matrix(Node1,Node2,Node3),(A;Node1, B;Node2,C;Node3).
-lattice:edge(Distance):-lattice:matrix(node(1),node(2),node(3)),Distance.
-lattice:edge(lattice:node(Prime1)):-
-	lattice:node(number(_),
-		     [Prime1,Prime2],
-		     lattice:edge([Prime2])),
-	Prime1,Prime2.
-lattice:edge([b]):-lattice:node(number(_)).
-lattice:edge([a]):-lattice:node(number(Prime)),([Prime]).
-lattice:edge([b]):-lattice:node(number(Prime)),([Prime]).
-lattice:edge([c]):-lattice:node(number(Prime3;Prime1;Prime2),[Prime1,Prime2,Prime3],([a],[c])).
-lattice:edge([Node1,Node2,Node3]):-lattice:matrix(Node1,Node2,Node3).
-lattice:edge([A,B];[B,C];[C,B]):-lattice:node(A;B;C),lattice:edge([Line,Node,Distance]),lattice:distance((lattice:node + lattice:edge = Distance)),lattice:matrix(Line,Node,Distance).
-lattice:edge(node):-lattice:matrix(node(1),node(2),node(3)).
-lattice:edge(Number):-random(Number).
-lattice:edge(Matrix;A,B,C):-lattice:matrix(Matrix;(A,B,C)).
-lattice:edge(A,B,C):-A,B,C.
-
-
-
-
 
 node(X,Y,Z):-lattice:node(X,Y,Z|Prime1,Prime2,Prime3),(Prime1,Prime2,Prime3).
 node(X,Y,Z):-add_edges(X,Y,Z).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+% Define a bag of elements M/C, which could be used to store and manage nodes and their attributes in the lattice
+lattice:bagof(M/C):-M,C.
+
+% Inserts an element T into a sorted list Ts, maintaining order based on a function f
+lattice:insert(T, Ts, [T|Ts]) :-
+    f(T, F),  % Compute a value F for T
+    lattice:bestf(Ts, Fl),  % Find the best value from existing list Ts
+    F =< Fl,  % Ensure F is less than or equal to the best value Fl
+    !.  % Cut to prevent backtracking
+
+lattice:insert(T, [Tl|Ts], [Tl|Tsl]) :-
+    lattice:insert(T, Ts, Tsl).  % Recursively insert T into the tail of the list
+
+% Continue processing based on current state and solution
+lattice:continue(_, _, _, yes, yes, Sol, _) :- f(Sol, yes).  % If solution meets criteria, succeed
+lattice:continue(P, t(N, F/G, [Tl|Ts]), Bound, Tree1, Solved, Sol, F) :-
+    lattice:insert(Tl, Ts, NTs),  % Insert Tl into Ts to form NTs
+    lattice:bestf(NTs, Fl),  % Find the best value from NTs
+    lattice:expand(P, t(N, Fl/G, NTs), Bound, Tree1, Solved, Sol).  % Expand tree with updated values
+lattice:continue(_, _, _, yes, yes, Sol, _) :- Sol.  % If solution meets criteria, succeed
+lattice:continue(P, t(N, F/G, [Tl|Ts]), Bound, Tree1, Solved, Sol, F) :-
+    lattice:insert(Tl, Ts, NTs),  % Insert Tl into Ts to form NTs
+    lattice:bestf(NTs, Fl),  % Find the best value from NTs
+    lattice:expand(P, t(N, Fl/G, NTs), Bound, Tree1, Solved, Sol).  % Expand tree with updated values
+
+% Creates a successor list based on current goal and node attributes
+lattice:succlist(_, [], []).  % Base case for an empty list
+lattice:succlist(G0, [N/C|NCs], Ts) :-
+    G is G0 + C,  % Compute new goal value G
+    h(N, H),  % Compute additional value H
+    F is G + H,  % Compute the final value F
+    lattice:succlist(G0, NCs, Tsl),  % Recursively process the rest of the list
+    lattice:insert(l(N, F/G), Tsl, Ts).  % Insert the new node into the successor list
+
+% Defines a goal check, defaulting to a specific goal
+lattice:goal(_):-lattice:goal(n).  % Checks if the goal is 'n'
+
+% Defines a tree structure based on node attributes
+lattice:t(N, F/G, Sub) :- lattice:l(N, F/G, Sub).  % Defines a tree with a specific structure
+
+% Defines a lattice structure based on node attributes
+lattice:l(N, F/G, Sub) :- lattice:(t(N, F/G, Sub)).  % Defines a lattice with a specific structure
+
+% Finds the best value in a lattice structure
+lattice:bestf(Start, Solution) :-
+    lattice:expand([], l(Start, 0/0), 9999, _, yes, Solution).  % Expands the lattice from a starting point
+lattice:bestf(Start, Solution) :-
+    lattice:expand([], l(Start, 0/0, 9999, _, yes, Solution), _, _, _, _).  % Expands with additional parameters
+lattice:bestf([T|_], F) :-
+    f(T, F).  % Finds the best value for a non-empty list
+lattice:bestf([], 9999).  % Default value for an empty list
+lattice:bestf(Start, Solution) :-
+    lattice:expand([], l(Start, 0/0, 9999, _, yes, Solution), _, _, _, _).  % Expands with additional parameters
+lattice:bestf(Start, Solution) :-
+    lattice:expand([], l(Start, 0/0), 9999, _, yes, Solution).  % Expands the lattice from a starting point
+lattice:bestf([T|_], F) :-
+    f(T, F).  % Finds the best value for a non-empty list
+lattice:bestf([], 9999).  % Default value for an empty list
+
+% Expands the lattice based on current state and attributes
+lattice:expand(P, l(N, _), _, _, yes, [N|P]) :- lattice:goal(N).  % If goal is met, return the path
+lattice:expand(P, Tree, Bound, Tree1, Solved, Solution) :- P, Tree, Bound, Tree1, Solved, Solution.  % Base case
+lattice:expand(P, l(N, _), _, _, yes, [N|P]) :- lattice:goal(N).  % If goal is met, return the path
+lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) :-
+    F =< Bound; Solved = Never,  % Check if value is within bound or solution is never
+    (lattice:bagof(M/C), (s(N, M, C), (Member,(P;N,Tree1)),Never,!,false)),(smart:input(Sol)->(F/G)).
+
+% Expands a lattice with a given bound, tree, and solution.
+% It recursively explores the tree and updates the solution if a better fit is found.
+lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) -:-
+    Member, Solved = Never
+    :- F =< Bound,
+       (lattice:bagof(M/C), (s(N, M, C), (~(Member) -> [M, P], Succ)),
+        !, lattice:succlist(G, Succ, Ts),
+        lattice:bestf(Ts, Fl),
+        lattice:expand(P, t(N, Fl/G, Ts), Bound, Tree1, Solved, Sol);
+        Solved = Never).
+
+
+
+% Defines a node predicate where (X, Y, Z) is either a tuple of numbers from lattice:node/3 or (X, Y, Z).
+node(X, Y, Z) -:- (Number1; Number2; Number3) :- lattice:node(Number1, Number2, Number3); (X, Y, Z).
+
+% Checks if lattice:matrix is in a state of 'pass', which depends on lattice:bestf/2 (best fit function).
+lattice:matrix(pass) :- lattice:bestf(_, _).
+
+
+
 
 lattice:node(d([A+1=B])):-A,B.
 lattice:node(d([A+2=C])):-A,C.
@@ -1466,7 +1344,12 @@ lattice:min(X, Y, Z) -:-
     lattice:min(Bound, BF, Bound1);
     (X, Y, Z).
 
-% Define an edge relation for a list of nodes with distance calculations
+
+% Computes the minimum value among Bound, BF, and Bound1.
+lattice:min(X, Y, Z) -:- Bound, BF, Bound1 :- lattice:min(Bound, BF, Bound1); (X, Y, Z).
+
+
+    %Define an edge relation for a list of nodes with distance calculations
 lattice:edge([c]) -:-
     Distance,
     Prime1,
@@ -1482,6 +1365,3 @@ lattice:edge([A, B]; [B, C]; [C, B]) -:-
     lattice:edge([A, B, C]),
     lattice:distance((lattice:node + lattice:edge = Distance)),
     lattice:matrix(Line, Node, Distance).
-
-
-speech:output(form_w(_),(_)).

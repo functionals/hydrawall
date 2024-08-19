@@ -49,7 +49,8 @@ if __name__ == "dshell":
 #
 # put subprocess, asyncio, and heapq in dhsell,
 # passing to tensorflow and hydrawall
-
+#   Write Primality test in python
+#   Rewrite Primality test in SWI-Prolog
 ###################################
 
 # -*- coding: utf-8 -*-
