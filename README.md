@@ -4,11 +4,11 @@
 This project integrates advanced tools and techniques for network forensics, vulnerability detection, and AI-driven expert systems. It leverages the capabilities of:
 
 
-- **[CORE](https://github.com/FunctionAnalysis/QUINE-ES/wiki/Overview)**:
+- **[QUINE](https://github.com/FunctionAnalysis/QUINE-ES/wiki/Overview)**:
 -  An expert system for functional analysis and reasoning.
-- **[INTERFACE_BUFFER](https://github.com/functionals/smart)**:
+- **[SMART](https://github.com/functionals/smart)**:
 -  A system for sophisticated data processing and analysis.
-- **[INFERENCE ENGINE](https://github.com/functionals/eeg/wiki/English-Engine-for-Grammar)**:
+- **[English Engine for Grammar](https://github.com/functionals/eeg/wiki/English-Engine-for-Grammar)**:
 -  An English Engine for Grammar, used for natural language processing and understanding.
 
 ## Features
