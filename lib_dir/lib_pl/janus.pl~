@@ -99,6 +99,7 @@
 
 :- if(\+current_predicate(py_call/1)).
 :- if(current_prolog_flag(windows, true)).
+:- use_module(library(shlib), [win_add_dll_directory/1]).
 
 
 :- use_foreign_library(foreign(janus), [visibility(global)]).
