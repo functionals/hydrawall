@@ -25,7 +25,7 @@ Created on Thu Aug 15 12:38:01 2024
 #   Rewrite Primality test in SWI-Prolog
 ###################################
 
-
+import tempfile
 import win32ui
 import win32com.client
 import heapq
@@ -34,6 +34,13 @@ import subprocess
 import logging
 from optparse import OptionParser
 from config import Config
+
+
+with tempfile.TemporaryFile() as tempf:
+    proc = subprocess.Popen(['echo', 'a', 'b'], stdout=tempf)
+    proc.wait()
+    tempf.seek(0)
+    print(tempf.read())
 
 class PrologHandler:
     def __init__(self, config):
@@ -88,15 +95,15 @@ if __name__ == "__main__":
 
 def send_dde_command(command):
     server = win32ui.CreateDdeServer()
-    server.Create('PythonApp', 'PrologApp')
+    server.Create('hydrawall', 'smart')
     server.Start()
     
     dde_client = win32com.client.Dispatch('WinDDEClient.DDE')
-    dde_client.Poke('PrologApp', command)
+    dde_client.Poke('smart', command)
 
 def receive_dde_data():
     dde_server = win32ui.CreateDdeServer()
-    dde_server.Create('PythonApp', 'PrologApp')
+    dde_server.Create('hydrawall', 'smart')
     dde_server.Start()
     
     while True:
@@ -142,14 +149,14 @@ def parse_args():
 
 class Smart:
     def smart_method(self):
-        print("Executing smart_method")
+        print("Executing smart")
 
     def janus_swi(self):
-        print("Executing janus_swi")
+        print("Executing janus")
 
     @staticmethod
     def smart_static_method():
-        print("Executing smart_static_method")
+        print("Executing smart_static")
 
 class KnowledgeBase:
     def __init__(self):
@@ -319,9 +326,9 @@ if __name__ == "__main__":
     kb.smart()
 
     # Example file operations
-    filename = 'input.txt'
-    prolog_script = 'prolog_script.pl'
-    string_to_pass = 'Hello from Python!'
+    filename = 'output.txt'
+    prolog_script = 'smart.pl'
+    string_to_pass = ':-start, main.'
     
     write_string_to_file(filename, string_to_pass)
     run_prolog_script(prolog_script)
@@ -340,7 +347,7 @@ if __name__ == "__main__":
 
 
 def call_prolog_script(command):
-    script_path = '/hydrawall/lib_dir/lib_pl/swip.py'
+    script_path = '/hydrawall/smart.pl'
     try:
         result = subprocess.run(['python', script_path, command], capture_output=True, text=True)
         print("Script Output:", result.stdout)
