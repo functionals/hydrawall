@@ -8,7 +8,7 @@ Created on Thu Aug 15 12:38:01 2024
 """
 
 ##########################TODO
-#
+#       SET TF AS A SERVER FOR DDE
 #
 #   Byte Strings for subprocess module
 #     between Dshell and tf, 
