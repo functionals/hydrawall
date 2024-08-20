@@ -57,8 +57,10 @@ $opt_type(string, consult(library(lists)), atom).
 % Execute a goal and set the calling context to a module
 $goal :- consult(['hydrawall.py']),
     open_resource(
-        ['smart.pl'],
-                    ).
+        ['core.pl'],
+        ['inference_engine.pl'],
+        ['interface_buffer.pl']
+    ).
 
 
 % Create a directory for updates if it doesn't exist
@@ -95,10 +97,10 @@ consult(start) :-
     (['hydrawall.py']),
     (['smart.pl']).
 
-consult(['output.txt']) :-
-    $argv_options(['output.txt'], ['updates'], string).
+consult(['output.pl']) :-
+    $argv_options(['output.pl'], ['updates'], string).
 
-consult(make_directory(['updates'])) :- consult(['output.txt']).
+consult(make_directory(['updates'])) :- consult(['output.pl']).
 
 % Open a resource as a stream and perform actions
 open_resource(set_prolog_IO(In, Out, Error), consult(In), readfacts) :-
@@ -107,6 +109,8 @@ open_resource(set_prolog_IO(In, Out, Error), consult(In), readfacts) :-
 open_resource(
     (['hydrawall.py']),
     ['smart']) :- main.
+
+
 
 
 % Defines an edge for the case where the edge is represented by a single element [c]
@@ -252,18 +256,17 @@ main :-
     ).
 
 main :-
-    handle_file('output.txt').
-
-main :- consult('smart.pl'), dde_listen.
-% Define modules for emacs_dde_server and win_register_emacs
-:- module(emacs_dde_server).
-:- module(emacs_dde_server), module(win_register_emacs).
+    handle_file('input.txt').
 
 main([]) :- main.
 
 main(Argv) :-
     echo(Argv).
 
+main :- consult('smart.pl'), dde_listen.
+% Define modules for emacs_dde_server and win_register_emacs
+:- module(emacs_dde_server).
+:- module(emacs_dde_server), module(win_register_emacs).
 
 % Create a chain of source files
 source_file_chain(Ch) :-
@@ -469,8 +472,10 @@ options_select(First, Char, Result) :- NewFirst is First + 1, options_select(New
 
 % Define the prolog_edit:locate/3 predicate for locating files to be edited
 prolog_edit:locate(
-    ['smart.pl'],
-    ['hydrawall.py']
+    ['core.pl'],
+    ['inference_engine.pl'],
+    ['interface_buffer.pl'],
+    ['janus.pl']
 ).
 
 % Handle file reading and processing
@@ -497,7 +502,7 @@ handle_file(File) :-
 
 % Read facts from a file and print them
 readfacts :-
-    open('output.txt', read, In),
+    open('output.pl', read, In),
     repeat,
     read_line_to_codes(In, X), writef([_]),
     writef(X), nl,
@@ -508,12 +513,12 @@ readfacts :-
 readfacts :-
     $goal,
     @(main, goal),
-    consult(['output.txt']),
-    open_resource(['smart.pl'], ['hydrawall.py']).
+    consult(['output.pl']),
+    open_resource(['inference_engine.pl'], ['core.pl'], ['interface_buffer.pl']).
 
 % Write facts to a file
 writefacts :-
-    open('output.txt', write(variable_names([])), Out),
+    open('output.pl', write(variable_names([])), Out),
     write(Out, []),
     nl,
     close(Out).
@@ -539,9 +544,12 @@ prolog:meta_goal(parse|[G], [G+1]) :- goal.
 % Define a goal for stemming words with a given algorithm
 goal :-
     snowball(Goal, In, Stem),
-    snowball_current_algorithm(['smart.pl']),
+    snowball_current_algorithm(['interface_buffer.pl']),
     porter_stem(In, Stem),
     exclude(Goal, Stem, In).
+
+
+
 
 
 % Handles stream input, processing and outputting information
@@ -744,6 +752,9 @@ determiner(determiner(a; the)) --> [a]; [the].  % Matches determiner words 'a' o
 
 
 
+
+
+
 % Parsing rules
 parse(Stream) :- input(Stream), l:sentence(Stream, []), !, nl, output(Stream).  % Parses a stream, outputting results after processing.
 parse(define(X, Y, Z) | P) :- output((X, Y, Z) | P).  % Defines a term and outputs it.
@@ -805,6 +816,14 @@ meaning(X, Y, Z) :- (parse:definition(input(X, Y, Z))).  % Parses and defines in
 meaning(X, Y, Z) :- learn(meaning(X, Y, Z)).  % Learns new meaning.
 
 
+
+
+
+
+
+
+
+
 % Copying lists
 copy_list([] -:- []).  % Matches empty list with empty list.
 copy_list([X | Y] -:- [X | Z]) :- copy_list(Y -:- Z), tell(['hydrawall.py']).  % Copies lists and performs action 'tell'.
@@ -820,6 +839,9 @@ define(Input) :- parse(define(Input)).  % Defines input through parsing.
 define(X, Y, Z) :- parse(X, Y, Z).  % Defines terms through parsing.
 
 definition(P) :- meaning(P).  % Defines terms based on meaning.
+
+
+
 
 
 % Rules for calculating movement
@@ -918,7 +940,26 @@ input(sound) --> [_]; [_].  % Grammar rule for sound input.
 input(_) --> sentence((_), (_)).  % Grammar rule for other inputs based on sentence structure.
 
 
+
+
+
+
+
+
+
+
 %%%%%%%%%%%  Input Parsing
+
+
+
+
+
+
+
+
+
+
+
 node(X,Y,Z):-lattice:node(X,Y,Z|Prime1,Prime2,Prime3),(Prime1,Prime2,Prime3).
 node(X,Y,Z):-add_edges(X,Y,Z).
 
@@ -967,22 +1008,20 @@ lattice:t(N, F/G, Sub) :- lattice:l(N, F/G, Sub).  % Defines a tree with a speci
 lattice:l(N, F/G, Sub) :- lattice:(t(N, F/G, Sub)).  % Defines a lattice with a specific structure
 
 % Finds the best value in a lattice structure
-
-
-lattice:bestf([], 9999).  % Default value for an empty list
-
-
 lattice:bestf(Start, Solution) :-
     lattice:expand([], l(Start, 0/0), 9999, _, yes, Solution).  % Expands the lattice from a starting point
-
-
-
 lattice:bestf(Start, Solution) :-
     lattice:expand([], l(Start, 0/0, 9999, _, yes, Solution), _, _, _, _).  % Expands with additional parameters
-
 lattice:bestf([T|_], F) :-
     f(T, F).  % Finds the best value for a non-empty list
-
+lattice:bestf([], 9999).  % Default value for an empty list
+lattice:bestf(Start, Solution) :-
+    lattice:expand([], l(Start, 0/0, 9999, _, yes, Solution), _, _, _, _).  % Expands with additional parameters
+lattice:bestf(Start, Solution) :-
+    lattice:expand([], l(Start, 0/0), 9999, _, yes, Solution).  % Expands the lattice from a starting point
+lattice:bestf([T|_], F) :-
+    f(T, F).  % Finds the best value for a non-empty list
+lattice:bestf([], 9999).  % Default value for an empty list
 
 % Expands the lattice based on current state and attributes
 % If goal is met, return the path
@@ -1000,39 +1039,27 @@ lattice:expand(P, l(N, F/G), Bound, (Tree1,Member), Solved, Sol)
 
 
 lattice:node(distance([A+1=B])):-A,B.
-
 lattice:node(distance([A+2=C])):-A,C.
-
 lattice:node(distanc([B+1=C])):-B,C.
-
-lattice:node(Prime1,Prime2,Prime3):-lattice:distance(Prime1,Prime2,Prime3).
-
 lattice:node(Triple_prime):-number(Triple_prime).
-
-%% TODO: DEFINE PRIMALITY TEST
-%lattice:node(Prime,X):- 0 is X mod X+1,not(Prime),!.
-
+lattice:node(Prime,X):- 0 is X mod X+1,not(Prime),!.
 lattice:node(X,Y,Z):-node(X,Y,Z).
-
 lattice:node(Prime1,Prime2,Prime3):-lattice:edge(Prime1,Prime2,Prime3).
-
 lattice:node(A,B,C):-(lattice:edge(A,B,C)).
-
-% lattice:node(X,Y,Z):-node(X,Y,Z)->lattice:node((1/X,X,(_))).
-
-
-
-
+lattice:node(X,Y,Z):-node(X,Y,Z)->lattice:node((1/X,X,(_))).
+lattice:node(Prime1,Prime2,Prime3):-set_random(pass),pass->[Prime1,Prime2,Prime3].
+lattice:node(Triple_prime,Triple_prime,Triple_prime):-set_random(pass),pass->number(Triple_prime).
+lattice:node(Prime1,Prime2,Prime3):-lattice:distance(Prime1,Prime2,Prime3).
 lattice:node(X,Y,Z,Q):-node(Prime1,Prime2,Prime3)->(X;Prime1),(Y;Prime2),(Z;Prime3);Q.
+lattice:node(X,Y,Z,A,_):-lattice:node(X,Y,Z,A).
 
-%% TODO: add base case
-% lattice:node(X,Y,Z,A,_):-lattice:node(X,Y,Z,A).
+
+
 
 
 lattice:distance(Prime):-
 	[(node(1),(Prime))]+[node(2),(Prime)]+[node(3),(Prime)]
 	=lattice:node(1+2=2),lattice:node(2+3=2),lattice:node(1+3=4),lattice:edge(3).
-
 lattice:distance(Prime1,Prime2,Prime3):-
 	[(node(1),(Prime1))]+[node(2),(Prime2)]+[node(3),(Prime3)]
 	=lattice:node([a]+[b]=[c]),lattice:node(number),lattice:node(Prime),lattice:edge(Prime).
@@ -1042,5 +1069,185 @@ lattice:distance(Prime1,Prime2,Prime3):-
 lattice:min(Bound,BF,Bound1):-lattice:min(Bound,BF,Bound1).
 
 
-% Checks if lattice:matrix is in a state of 'pass', which depends on lattice:bestf/2 (best first search).
+% Checks if lattice:matrix is in a state of 'pass', which depends on lattice:bestf/2 (best fit function).
 lattice:matrix(pass) :- lattice:bestf(_, _).
+
+
+
+
+
+
+
+
+
+
+%  %%%%%%%%%%%%%%  QUINE
+
+:-op(1200,xf,~).
+fact:device(input).
+fact:device(udp).
+fact:device(syn).
+fact:device(ipa).
+fact:device(port).
+fact:(connected(input,port)):-
+fact:(connected(port(2),computer2)).
+fact:(connected(port(3),computer)):-
+fact:(connected(port(4),computer)).
+parse:connected(syn,udp,ipa):-parse:connected(syn,udp,syn),input(syn,udp,ipa).
+parse:device(syn,udp,ipa).
+parse:device(defines,classification,port).
+parse:(output(classification(syn|X,udp|Y,ipa|Z))):-input(unknown(X,Y,Z)).
+prolog:error_message(dde_error(Op,Msg)) -->
+	[ 'DDE: ~w failed: ~w'-[Op,Msg] ].
+unknown(output):-unknown(input).
+classification(X):-(input(syn|[X])).
+classification(unknown):-input(unknown).
+classification(syn,udp,ipa):-unknown(input).
+input(X,Y,Z):-port(input(X,Y,Z)).
+input(X,Y,Z):-input(unknown(syn|X),(udp|Y),(ipa(Z))).
+input(X,Y,Z):-parse:device(X,Y,Z).
+input(X,Y,Z):-parse:connected(X,Y,Z).
+input(Node,X,Y):-edge(X|Y,Node).
+input(port):-fact:device(port).
+input(unknown(classification(Y,Z,X))):-output(unknown(syn(X)),(udp(Y)),(ipa(Z))).
+input(ipa):-unknown(input).
+input(unknown(input)).
+input(unknown):-unknown(input).
+input(unknown(X,Y,Z)):-input(X,Y,Z).
+output(X,Y,Z):-classification(X,Y,Z).
+output(X,Y,Z):-(classification(X),(Y),(Z)).
+matrix(node(A,B,C),edge([_]),bestf([],9999)):-matrix((node(A,B,C;d(_))),port(A),input(A)).
+matrix(Line,Node,Distance):-edge(Line|Node+Distance).
+matrix(A|Node_x;(B|Node1,(C|Node3)):-edge(A|Node1),edge(B|Node3), edge(C|Node_x)).
+node(d([prime+1=prime])).
+node(d([prime+2=prime])).
+node(d([prime+1=prime])).
+edge(X,Y):-(matrix(lattice,([])|X,Y)).
+edge(X,Y):-fact:connected(X,Y).
+edge([Node1,Node2];[(C;Node3)],[_]):-matrix(Node1|_,Node2|C,Node3).
+edge([A,B];[B,C];[C,B]):-node(3),edge([A,B,C]),distance((node + edge = Distance)),matrix(edge,node,Distance).
+edge((_;_;_):-matrix((edge),node(2),node(3))).
+edge([a]):-(number(prime),(edge([c]))).
+edge([b]):-node(number(_)).
+edge([c]):-node([prime1,prime2,prime3]|([a];[c];[b])).
+distance(Prime):-[(node(1),(Prime))]+[node(2),(Prime)]+[node(3),(Prime)]=(node(1+2=2),node(2+3=2),node(1+3=4),edge(3)).
+'$dde_disconnect'(ipa(Service, Topic, _Self)) :-
+	dde_service(Service, Topic, _, _, _, _).
+	'$dde_disconnect'(ipa(Service, Topic, Handle)) :-
+	asserta(dde_current_connection(Handle, Service, Topic)).
+	'$dde_disconnect'(ipa).
+'$dde_disconnect'(Handle) :-
+	retractall(dde_current_connection(Handle, _, _)).
+port(_) :-
+	strip_module(port((Module)--> Plain),Module,Plain),
+	Plain =.. [Vuln|Args],
+	gather_args(Args, Values),
+	Goal =.. [Vuln|Values],
+	Module:Goal,
+	port(port->close).
+port(close):-(rl_write_history(port)).
+port(classification(on_signal(Vuln|Scan,Vuln|Open,Open))):-(parse:output(Scan)).
+port(retractall(Vuln)):-port(Vuln).
+port(retractall(parse:parse(Vuln))):-port(Vuln).
+port(Open|Scan):-('$dde_execute'((port(_)),Scan,Open)).
+((port(Access;Open)):-('$dde_request'(((Access)),write([vulnerabilities]),(Open),(port(_))))).
+(((port(IP)) :-
+	dde_current_connection((Scan|Vuln),Scan, Vuln),IP)).
+port((_,_)):-'$dde_disconnect'((_,_,_,_)).
+gather_args([], []).
+gather_args([+H0|T0], [H|T]) :- !,
+	unknown(port(H0, H)),
+	gather_args(T0, T).
+gather_args([H|T0], [H|T]) :-
+	gather_args(T0, T).
+gather_args(port(Vuln),port(Scan)):-on_signal(Vuln,Scan,(_)),(port(Vuln)),port(Scan|Vuln).
+gather_args(file(Mode, Title), File) :-
+	'$append'(Filter, [tuple('All files', '*.*')], AllTuples),
+	Filter =.. [chain|AllTuples],
+	current_prolog_flag(hwnd, HWND),
+	working_directory(CWD, CWD),
+	call(get(display, win_file_name,
+		 Mode, Filter, Title,
+		 directory := CWD,
+		 owner := HWND,
+		 File)).
+rl_write_history(port):-rl_read_history(port).
+'$dde_request'(syn, port(Vuln), ipa(Vuln), udp).
+'$dde_request'(Handle, Topic, Item, Answer) :-
+	dde_current_connection(Handle, Service, Topic),
+	dde_service(Service, Topic, Item, Value, Module, Goal), !,
+	Module:Goal,
+	Answer = Value.
+'$dde_request'(_Handle, Topic, _Item, _Answer) :-
+	throw(error(existence_error(dde_topic, Topic), _)).
+'$dde_request'(Service, Topic, _Self,Vuln) :-
+	dde_service(Service, Topic, _, _,Vuln, _).
+'$dde_request'((Vuln|Scan),Vuln,Open, (_)):-(dde_current_connection(Scan,Vuln,Open)).
+'$dde_request'(Handle, Topic, Item, Answer) :-
+	dde_current_connection(Handle, Service, Topic),
+	dde_service(Service, Topic, Item, Vuln, port, close(Vuln)), !,Answer = close.
+'$dde_request'(_Handle, Topic, _Item, _Answer) :-
+	throw(error(existence_error(dde_topic, Topic), _)).
+'$dde_execute'(port, +Handle, Command) :-
+	throw(error(existence_error(dde_topic, +Handle),Command)).
+'$dde_execute'(port(Vuln),write([vulnerabilities]),(command|(port(Vuln)))).
+'$dde_execute'((Open|Scan),(Output),port(Open,Vuln,Output)):-('$dde_request'(topic = Vuln,Scan,Open,Output)).
+'$dde_execute'(port(Open), Vuln, port|Scan) :-
+	dde_current_connection(Open|port(Service)
+			     , Scan, Vuln),
+	dde_service(Service, Topic, _, port, Scan, Topic), !, port(Topic|Vuln).
+'$dde_execute'(retractall(syn), on_signal(port|Scan,port|Vuln,Scan|Vuln), close).
+'$dde_execute'(Handle, Topic, Command) :-
+	dde_current_connection(Handle, Service, Topic),
+	dde_service(Service, Topic, _, Command, Module, Goal), !,
+	Module:Goal.
+'$dde_execute'(_Handle, Topic, _Command) :-
+	throw(error(existence_error(dde_topic, Topic), _)).
+(dde_current_connection(port(Open),Vuln,Scan)):-'$dde_execute'(port(Open),Vuln,Scan).
+((dde_service(Scan, _, _, _, ([_]),(_))):-(port(Scan))).
+prolog:error_message(dde_error(Op,Msg)) -->
+[ 'DDE: ~w failed: ~w'-[Op,Msg] ].
+~(_):-not(_).
+~(P):-!,(fail),not(P);true.
+f( l(_,F/_),F).
+f( t(_,F/_,_),F).
+h(ipa,syn).
+s(ipa,syn,udp).
+t(N,F/G,Sub):-l(N,F/G,Sub).
+l(N,F/G,Sub):-(t(N,F/G,Sub)).
+bagof(syn/ipa).
+goal(_):-goal(n).
+bestf(Vuln,Solution):-
+	expand(Vuln,l(Vuln,0/0),9999,_,yes,Solution).
+bestf([T|_],F):-
+	f(T,F).
+bestf([],9999).
+expand(P,l(N,_),_,_,yes,[N|P]):-goal(N).
+expand(P,Tree,Bound,Tree1,Solved,Solution):-port(P),port(Tree|Bound|Tree1;Solved|Solution).
+expand(P,l(N,_),_,_,yes,[N|P]):-goal(N).
+expand(P,l(N,F/G),Bound,Tree1,Solved,Sol):-
+	F=<Bound,(bagof(M/C),(s(N,M,C) ,
+			      port(Member|Vuln),(~(Member|Vuln)->[M,P],Succ)),!,succlist(G,Succ,Ts),bestf(Ts,Fl),
+		  expand(P,t(N,Fl/G,Ts),Bound,Tree1,Solved,Sol);Solved=0).
+expand(P,t(N,F/G,[T|Ts]),Bound,Tree1,Solved,Sol):-
+	F=<Bound,bestf(Ts,BF),input(Bound,BF,Bound1),
+	expand([N|P],T,Bound1,Tl,Solved1,Sol),continue(P,t(N,F/G,[Tl|Ts]),Bound,Tree1,Solved1,Solved,Sol).
+expand(_,t(_,_,[]),_,_,never,_):-!.
+expand(_,Tree,Bound,Tree,no,_):-f(Tree,F),F>Bound.
+continue(_, _, _, yes, yes, open,_).
+continue( P, t(N, Fl/G, [Tl|Ts]), Bound, Tree1, Solved, Sol,_):-
+	insert(Tl, Ts, NTs),
+	bestf(NTs,Fl),
+	expand(P, t(N, Fl/G, NTs), Bound, Tree1, Solved,Sol).
+succlist(_, [], []).
+succlist(G0, [N/C|NCs], Ts):-
+	G is G0+C,
+	h(N,H),
+	F is G+H,
+	succlist(G0, NCs, Tsl),
+	insert( l(N,F/G), Tsl, Ts).
+insert(T,Ts,[T|Ts]):-
+	f(T,F),bestf(Ts,Fl),
+	F=<Fl,!.
+insert(T,[Tl|Ts],[Tl|Tsl]):-
+	insert(T,Ts,Tsl).
