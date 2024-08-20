@@ -1,4 +1,5 @@
-%UPDATE 19
+%UPDATE 20
+
 
 %%% Custom Operators
 :-op(1200,xf,~).
@@ -11,9 +12,9 @@
 :- initialization(main).
 
 %Write to a database
-:-assert(pass).
-:-assert(pass(_)).
-% Defines dynamic predicates that can be modified at runtime.
+:-assert(smart:output(_)).
+
+%Defines dynamic predicates that can be modified at runtime.
 :- dynamic l:grab/2.
 :- dynamic l:letter/2.
 :- dynamic l:noun_p/0.
@@ -197,6 +198,14 @@ lattice:expand(P, l(N, F/G), Bound, Tree1, Solved, Sol) -:-
 node(X, Y, Z) -:- (Number1; Number2; Number3) :- lattice:node(Number1, Number2, Number3); (X, Y, Z).
 
 
+% Defines the 'pass' predicate
+pass :-
+	[Prime1, Prime2, Prime3],  % Defines a list of primes.
+	lattice:node(Prime1, Prime2, Prime3),  % Checks if a node with the given primes exists in the lattice.
+	source_file_chain(lattice:bagof(_)).  % Checks for a source file chain with the lattice bag.
+pass(Ch) :- pass, source_file_chain(Ch), lattice:bagof(Ch).  % Checks if 'pass' is true, then verifies the source file chain and lattice bag.
+pass:start :- pass.  % Defines the start condition for 'pass'.
+
 
 
 %Locate a Prolog file and return its absolute path
@@ -255,7 +264,7 @@ main([]) :- main.
 main(Argv) :-
     echo(Argv).
 
-
+main :- consult('smart.pl'), dde_listen.
 % Define modules for emacs_dde_server and win_register_emacs
 :- module(emacs_dde_server).
 :- module(emacs_dde_server), module(win_register_emacs).
@@ -292,6 +301,17 @@ user_source_file(_) :- pass:start.
 % Define a DDE (Dynamic Data Exchange) connection with a matrix and handle requests
 '$dde_connect'(lattice:matrix) :- handle_request(pass).
 
+dde_listen:- smart:input('hydrawall.py', Command),
+    (   Command = 'SEND DATA'
+    ->  send_data
+    ;   Command = 'EXIT'
+    ->   halt
+    ;   fail
+    ).
+send_data:- reply('Received from SMART').
+reply(Response):-
+    smart:output('hydrawall.py',Response),
+    dde_listen.
 
 handle_request(Item) :-
     % Logs an error message if an unknown request is received
@@ -363,8 +383,8 @@ expand_path(Term, D) :-
 
 % Define regular expressions as global variables
 % Defines regex patterns for use in the Prolog environment
-:- pce_global(prolog_full_stop, new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
-:- pce_global(prolog_decl_regex, new(regex('^:-\\s*[a-z_]+'))).
+% :- pce_global(prolog_full_stop, new(regex('[^-#$&*+./:<=>?@\\\\^`~]\\.($|\\s)'))).
+%:-pce_global(prolog_decl_regex, new(regex('^:-\\s*[a-z_]+'))).
 
 % Conditional block checking if 'shell_register_dde/1' predicate exists
 :- if(current_predicate(shell_register_dde/1)).
@@ -425,13 +445,6 @@ s(N, M, C) :- N, M, C.  % Calls 'N', 'M', and 'C' sequentially if they succeed.
 ~(_) :- not(_).  % General negation rule, if the argument does not hold, succeeds.
 ~(pass) :- not(pass).  % Ensures 'pass' is not true.
 
-% Defines the 'pass' predicate
-pass :-
-	[Prime1, Prime2, Prime3],  % Defines a list of primes.
-	lattice:node(Prime1, Prime2, Prime3),  % Checks if a node with the given primes exists in the lattice.
-	source_file_chain(lattice:bagof(_)).  % Checks for a source file chain with the lattice bag.
-pass(Ch) :- pass, source_file_chain(Ch), lattice:bagof(Ch).  % Checks if 'pass' is true, then verifies the source file chain and lattice bag.
-pass:start :- pass.  % Defines the start condition for 'pass'.
 
 
 % Reads a sentence from input and processes it.

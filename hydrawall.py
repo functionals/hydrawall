@@ -1,39 +1,11 @@
+########UPDATE 20
+
 # -*- coding: utf-8 -*-
 """
 Created on Thu Aug 15 12:38:01 2024
 
 @author: Ian Malloy
 """
-# swip.py
-import subprocess
-
-def call_prolog_script(command):
-    script_path = '/hydrawall/lib_dir/lib_pl/swip.py'
-    try:
-        result = subprocess.run(['python', script_path, command], capture_output=True, text=True)
-        print("Script Output:", result.stdout)
-        if result.stderr:
-            print("Script Error:", result.stderr)
-    except Exception as e:
-        print(f"Failed to call script: {e}")
-
-if __name__ == "__main__":
-    command = "your_prolog_command_here"
-    call_prolog_script(command)
-
-def dshell(command):
-    script_path = '/hydrawall/lib_dir/lib_py/dshell'
-    try:
-        result = subprocess.run(['python', script_path, command], capture_output=True, text=True)
-        print("Script Output:", result.stdout)
-        if result.stderr:
-            print("Script Error:", result.stderr)
-    except Exception as e:
-        print(f"Failed to call script: {e}")
-
-if __name__ == "dshell":
-    command = "dshell command:"
-    dshell(command)
 
 ##########################TODO
 #
@@ -43,7 +15,7 @@ if __name__ == "dshell":
 #    tf and smart, 
 #     and Dshell/smart
 #
-#   Bitmaps instead of json
+#
 # map heapq to prime nodes and set iterations 
 # of tensor flow to bfs iterations.
 #
@@ -53,12 +25,9 @@ if __name__ == "dshell":
 #   Rewrite Primality test in SWI-Prolog
 ###################################
 
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Aug 15 22:34:31 2024
-@author: Ian Malloy
-"""
 
+import win32ui
+import win32com.client
 import heapq
 import asyncio
 import subprocess
@@ -105,6 +74,44 @@ def run_prolog_command(prolog_script, command):
             print("Prolog Error:", result.stderr)
     except Exception as e:
         print(f"Failed to run Prolog command: {e}")
+
+
+
+def main():
+    with open('output.txt', 'r') as file:
+        binary_string = file.read().strip()
+
+    
+if __name__ == "__main__":
+    main()
+
+
+def send_dde_command(command):
+    server = win32ui.CreateDdeServer()
+    server.Create('PythonApp', 'PrologApp')
+    server.Start()
+    
+    dde_client = win32com.client.Dispatch('WinDDEClient.DDE')
+    dde_client.Poke('PrologApp', command)
+
+def receive_dde_data():
+    dde_server = win32ui.CreateDdeServer()
+    dde_server.Create('PythonApp', 'PrologApp')
+    dde_server.Start()
+    
+    while True:
+        try:
+            data = dde_server.Receive()
+            print(f"Received data from Prolog: {data}")
+        except KeyboardInterrupt:
+            break
+
+if __name__ == "__main__":
+    
+    send_dde_command('start.')
+    
+    # Start receiving data
+    receive_dde_data()
 
 def write_string_to_file(filename, string):
     """Write a string to a file."""
@@ -332,11 +339,30 @@ if __name__ == "__main__":
 
 
 
+def call_prolog_script(command):
+    script_path = '/hydrawall/lib_dir/lib_pl/swip.py'
+    try:
+        result = subprocess.run(['python', script_path, command], capture_output=True, text=True)
+        print("Script Output:", result.stdout)
+        if result.stderr:
+            print("Script Error:", result.stderr)
+    except Exception as e:
+        print(f"Failed to call script: {e}")
 
-def main():
-    with open('output.txt', 'r') as file:
-        binary_string = file.read().strip()
-
-    
 if __name__ == "__main__":
-    main()
+    command = "smart:input(dshell.py)"
+    call_prolog_script(command)
+
+def dshell(command):
+    script_path = '/hydrawall/dshell'
+    try:
+        result = subprocess.run(['python', script_path, command], capture_output=True, text=True)
+        print("Script Output:", result.stdout)
+        if result.stderr:
+            print("Script Error:", result.stderr)
+    except Exception as e:
+        print(f"Failed to call script: {e}")
+
+if __name__ == "dshell":
+    command = "dshell command:"
+    dshell(command)
