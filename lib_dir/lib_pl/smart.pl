@@ -1,4 +1,5 @@
-%%v23
+%%v24
+
 
 %%% Custom Operators
 :-op(1200,xf,~).
@@ -82,11 +83,7 @@ $opt_type(string, consult(library(lists)), atom).
 
 % Execute a goal and set the calling context to a module
 $goal :- consult(['hydrawall.py']),
-    open_resource(
-        ['core.pl'],
-        ['inference_engine.pl'],
-        ['interface_buffer.pl']
-    ).
+    open_resource(['smart.pl'],['output.txt']).
 
 
 % Create a directory for updates if it doesn't exist
@@ -291,9 +288,11 @@ main :-
 main :-
     handle_file('input.txt').
 
-main([]) :- main.
 
 main :- consult('smart.pl'), dde_listen.
+
+main([]) :- main.
+
 
 main(Argv) :-
     echo(Argv).
