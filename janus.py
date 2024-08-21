@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Aug 20 20:08:13 2024
+
+Modified slightly to fit Hydrawall: Ian Malloy, 2024
+"""
 # Part of SWI-Prolog
 
 # Author:        Jan Wielemaker
@@ -49,7 +55,7 @@ import sys
 import functools
 
 
-'''import hydrawall
+import hydrawall
 import janus
 import janus_swi
 
@@ -77,7 +83,7 @@ if not hasattr(jpy, 'call'):
 else: hydrawall
 if not hasattr(janus, 'call'):
     raise RuntimeError(f"Loaded wrong module 'janus' from {_swipl.__file__}")
-else: hydrawall'''
+else: hydrawall
 
 
 import janus
@@ -918,4 +924,5 @@ mat = np.arange(15).reshape(3, 5)
 def go():
     dim = np.ndim(mat)
     return(dim)
+
 

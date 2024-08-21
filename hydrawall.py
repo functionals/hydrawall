@@ -1,4 +1,4 @@
-########UPDATE 20
+########UPDATE SMART BETA
 
 # -*- coding: utf-8 -*-
 """
@@ -16,6 +16,15 @@ Created on Thu Aug 15 12:38:01 2024
 #     and Dshell/smart
 #
 #
+# Hydrawall inputs to recursive functions in smart, sampling from succesful values
+#   as prime nodes in a lattice of tf output
+#
+#
+#   Dshell socket to tf in sockets,
+#   smart to tf as tf dde server,
+#   tf to smart in dde
+#   dshell socket to hydrawall
+#   commands from hydra to smart and smart out to hydra and terminal
 # map heapq to prime nodes and set iterations 
 # of tensor flow to bfs iterations.
 #
@@ -27,6 +36,7 @@ Created on Thu Aug 15 12:38:01 2024
 
 import tempfile
 import win32ui
+import dde
 import win32com.client
 import heapq
 import asyncio
@@ -95,11 +105,17 @@ if __name__ == "__main__":
 
 def send_dde_command(command):
     server = win32ui.CreateDdeServer()
-    server.Create('hydrawall', 'smart')
+    server.Create('hydrawall', 'smart', 'tf')
     server.Start()
     
     dde_client = win32com.client.Dispatch('WinDDEClient.DDE')
     dde_client.Poke('smart', command)
+
+server = dde.CreateServer()
+server.Create("update")
+conversation = dde.CreateConversation(server)
+conversation.ConnectTo("tf.py","Anything")
+conversation.ConnectTo("smart.pl","Anything")
 
 def receive_dde_data():
     dde_server = win32ui.CreateDdeServer()
