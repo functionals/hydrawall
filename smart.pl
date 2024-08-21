@@ -1,4 +1,4 @@
-%%%%%%%% SMART BETA
+%%%%%%%% SMART ALPHA
 
 %%% Custom Operators
 :-op(1200,xf,~).
@@ -2610,3 +2610,4 @@ message(py_shell(no_janus)) -->
     ].
 message(add_cwd) -->
     [ 'Interactive session; added `.` to Python `sys.path`'-[] ].
+
