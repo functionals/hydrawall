@@ -1,4 +1,4 @@
-%%%%%%%% SMART ALPHA
+%%%%%%%% SMART ALPHA v2
 
 %%% Custom Operators
 :-op(1200,xf,~).
@@ -115,7 +115,7 @@ set_prolog_IO(In, Out, Error) :-
 
 
 % Define consult predicates for reading Prolog source files
-consult(start) :-
+consult(output.txt) :-
     (['hydrawall.py']),
     (['smart.pl']).
 
@@ -232,7 +232,7 @@ pass :-
 	lattice:node(Prime1, Prime2, Prime3),  % Checks if a node with the given primes exists in the lattice.
 	source_file_chain(lattice:bagof(_)).  % Checks for a source file chain with the lattice bag.
 pass(Ch) :- pass, source_file_chain(Ch), lattice:bagof(Ch).  % Checks if 'pass' is true, then verifies the source file chain and lattice bag.
-pass:start :- pass.  % Defines the start condition for 'pass'.
+% pass:start :- pass.  % Defines the start condition for 'pass'.
 
 
 
@@ -274,7 +274,7 @@ main :-
 
 % Main entry point for interactive use and debugging
 main :-
-    open('start', write, OS),
+    open('update.txt', write, OS),
     (   consult(In),
         read(In, Eq),
         write(Eq, Out), nl,
@@ -342,7 +342,7 @@ user_source_file(source_file(Z)) :-
     smart:analyze(X),
     user_source_file(Y).
 
-user_source_file(_) :- pass:start.
+user_source_file(_) :- ['update.txt'].
 
 
 % Connects to the lattice matrix and handles the request with the 'pass' operation.
