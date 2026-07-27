@@ -442,7 +442,7 @@ janus`.   The module provides three groups of support:
     Prolog terms and Prolog exceptions.
 """
 import sys
-import functools
+
 
 
 
@@ -558,33 +558,7 @@ class query:
     def __init__(self, query, inputs={}, truth_vals=TruthVal.PLAIN_TRUTHVALS):
         """Create from query and inputs as janus.query_once()"""
         inputs['truth'] = truth_vals
-        self.state = _swipl.open_query(query, inputs)
-    def __iter__(self):
-        """Implement iter protocol"""
-        return self
-    def __next__(self):
-        """Implement iter protocol.  Returns a dict as janus.query_once()"""
-        rc = self.next()
-        if rc is None:
-            raise StopIteration()
-        return rc
-    def __enter__(self):
-        """Implement context manager protocol"""
-        return self
-    def __exit__(self, type, value, tb):
-        """Implement context manager protocol"""
-        self.close()
-    def __del__(self):
-        """Close the Prolog query"""
-        self.close()
-    def next(self):
-        """Allow for explicit enumeration,  Returns None or a dict"""
-        rc = _swipl.next_solution(self.state)
-        return None if rc == False or rc["truth"] == False else rc
-    def close(self):
-        """Explicitly close the query."""
-        _swipl.close_query(self.state)
-
+  
 def query_once(query, inputs={}, keep=False, truth_vals=TruthVal.PLAIN_TRUTHVALS):
     """
     Call a Prolog predicate as `query_once/1`
@@ -604,8 +578,7 @@ def query_once(query, inputs={}, keep=False, truth_vals=TruthVal.PLAIN_TRUTHVALS
         How to deal with _Well Founded Semantics_ undefined results.
     """
     inputs['truth'] = truth_vals
-    return _swipl.call(query, inputs, keep)
-
+  
 class Query(query):
     """
     Deprecated.  Renamed to class `query`.
@@ -742,71 +715,9 @@ class apply:
     >>> [*apply("user", "between", 1, 6)]
     [1, 2, 3, 4, 5, 6]
     """
-    def __init__(self, module, predicate, *args):
-        self.state = _swipl.open_query("janus:px_call(In,M,P,Out)",
-                                       { "M":module,
-                                         "P":predicate,
-                                         "In":args
-                                        });
-    def __iter__(self):
-        """Implement iter protocol"""
-        return self
-    def __next__(self):
-        """Implement iter protocol.  Returns a dict as janus.query_once()"""
-        rc = _swipl.next_solution(self.state)
-        if rc == False:
-            raise StopIteration()
-        else:
-            return rc["Out"]
-    def __del__(self):
-        """Close the Prolog query"""
-        _swipl.close_query(self.state)
-    def next(self):
-        """Allow for explicit enumeration,  Returns None or a dict"""
-        rc = _swipl.next_solution(self.state)
-        if rc == False:
-            return None
-        else:
-            return rc["Out"]
-    def close(self):
-        """Explicitly close the query."""
-        _swipl.close_query(self.state)
-
-
-
+  
 ################################################################
 # Misc functions
-
-def engine():
-    """Return the engine id if the attached Prolog engine"""
-    return _swipl.engine()
-
-def attach_engine():
-    """Attach a Prolog engine to the current thread if needed"""
-    return _swipl.attach_engine()
-
-def detach_engine():
-    """Detach the attached Prolog engine"""
-    return _swipl.detach_engine()
-
-def consult(file, data=None, module='user'):
-    """
-    Consult a Prolog file.
-
-    Parameters
-    ----------
-    file: str
-        Name of the file to consult.
-    data: str=None
-        If provided, do not read a file, but compile the Prolog text
-        from the given string.
-    module: str='user'
-        Target module.  This is where the code is loaded if the file
-        (or data) does not define a module or where the exports of the
-        loaded module are imported into.
-    """
-    query_once("janus:py_consult(File, Data, Module)",
-         {"File":file, "Data":data, "Module":module})
 
 def echo(v):
     """
@@ -941,8 +852,7 @@ class Term:
         """Destroy the represented term"""
         record = self._record;
         self.record = 0
-        _swipl.erase(record)
-
+        
 class PrologError(Exception):
     """Represent a Prolog exception
 
@@ -1168,7 +1078,7 @@ def dict_to_list(indict):
 # Output: {'name': 'Bob', 'languages': ['English', 'Fench']}
 
 def prolog_dumps(list):
-    jdict = json.loads(String)
+    jdict = json.loads(smart_instance)
     jlist = list(jdict.items())
     return(jlist)
 
