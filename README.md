@@ -37,14 +37,13 @@ This project integrates advanced tools and techniques for network forensics, vul
 ## Usage
 
 ### Network Forensics
-TO DO
+Send to DSHELL processes, imprint to TENSOR FLOW using SMART as inference across both.  Prime number based classification leads to hashes.
 
 ### Train the TensorFlow model with Dshell.trainingpack
 
-TO DO
 
 ### Run Vulnerability Analysis
-TO DO
+Have DSHELL inform TENSOR FLOW of what to identify, and hash it with SMART.
 # Supplements
 
 # Dshell
